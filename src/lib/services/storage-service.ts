@@ -2141,7 +2141,23 @@ export const MatchStatsService = {
 // ---------------------------------------------------------------------------
 export const FinanceService = {
   getTransactions(groupId: string): FinancialTransaction[] {
-    return getStored<FinancialTransaction[]>(`transactions_${groupId}`, []);
+    const direct = getStored<FinancialTransaction[]>(`transactions_${groupId}`, []);
+    if (direct.length > 0) return direct;
+
+    // Fallback inteligente: busca em outros grupos locais (ex: group-1 ou criados anteriormente) para não perder nenhum lançamento
+    const allGroups = GroupService.getGroups();
+    for (const g of allGroups) {
+      if (g.id !== groupId) {
+        const other = getStored<FinancialTransaction[]>(`transactions_${g.id}`, []);
+        if (other.length > 0) {
+          const migrated = other.map((t) => ({ ...t, groupId }));
+          setStored(`transactions_${groupId}`, migrated);
+          return migrated;
+        }
+      }
+    }
+
+    return direct;
   },
 
   async syncTransactionsFromCloud(groupId: string): Promise<FinancialTransaction[]> {
@@ -2149,19 +2165,26 @@ export const FinanceService = {
     if (!isSupabaseConfigured || !supabase || !groupId) return local;
 
     try {
+      if (!isValidUUID(groupId)) {
+        return local;
+      }
+
       const { data, error } = await supabase
         .from('financial_transactions')
         .select('*')
         .eq('group_id', groupId)
         .order('created_at', { ascending: false });
 
-      if (error || !data) return local;
+      if (error || !data) {
+        if (error) console.warn('Aviso ao consultar transações do Supabase:', error);
+        return local;
+      }
 
       const remoteTrans: FinancialTransaction[] = data.map((t: any) => ({
         id: t.id,
         groupId: t.group_id,
         userId: t.user_id || undefined,
-        userName: t.userName || undefined,
+        userName: t.userName || t.username || undefined,
         type: t.type,
         category: t.category,
         description: t.description,
@@ -2176,7 +2199,25 @@ export const FinanceService = {
       const map = new Map<string, FinancialTransaction>();
       remoteTrans.forEach((t) => map.set(t.id, t));
       local.forEach((t) => {
-        if (!map.has(t.id)) map.set(t.id, t);
+        if (!map.has(t.id)) {
+          map.set(t.id, t);
+          if (isValidUUID(t.id) && isValidUUID(groupId)) {
+            supabase?.from('financial_transactions').upsert([{
+              id: t.id,
+              group_id: groupId,
+              user_id: isValidUUID(t.userId || '') ? t.userId : null,
+              userName: t.userName || null,
+              type: t.type,
+              category: t.category,
+              description: t.description,
+              amount: t.amount,
+              due_date: t.dueDate,
+              paid_at: t.paidAt || null,
+              status: t.status,
+              recorded_by: isValidUUID(t.recordedBy) ? t.recordedBy : '00000000-0000-4000-8000-000000000001',
+            }]).then(() => {});
+          }
+        }
       });
 
       const merged = Array.from(map.values()).sort(

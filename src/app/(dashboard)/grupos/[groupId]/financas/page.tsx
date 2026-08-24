@@ -78,7 +78,7 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
   // ---------------------------------------------------------------------------
   // Filtro Temporal de Período (Mensal / Anual / Geral)
   // ---------------------------------------------------------------------------
-  const [periodType, setPeriodType] = useState<FinancePeriodType>('monthly');
+  const [periodType, setPeriodType] = useState<FinancePeriodType>('all');
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
   const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);
 
