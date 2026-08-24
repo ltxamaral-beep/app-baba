@@ -11,6 +11,12 @@ export interface RegisterAthletePayload {
   password?: string;
   phone: string;
   cpf: string;
+  cep?: string;
+  street?: string;
+  number?: string;
+  neighborhood?: string;
+  city?: string;
+  state?: string;
   address: string;
   mainPosition?: UserPosition;
   secondaryPosition?: UserPosition | '';
@@ -320,6 +326,12 @@ export const AuthService = {
         email: data.email,
         phone: data.phone,
         cpf: data.cpf,
+        cep: data.cep || undefined,
+        street: data.street || undefined,
+        number: data.number || undefined,
+        neighborhood: data.neighborhood || undefined,
+        city: data.city || undefined,
+        state: data.state || undefined,
         address: data.address,
         avatarUrl: data.avatarUrl || undefined,
         mainPosition: data.mainPosition || 'meia',

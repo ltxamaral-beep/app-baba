@@ -17,6 +17,7 @@ import {
   DominantFoot
 } from '@/types';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase/client';
+import { parseAddressString } from '@/lib/utils/cep-service';
 
 // ---------------------------------------------------------------------------
 // Helpers para Geração e Validação de UUIDs (compatíveis com PostgreSQL)
@@ -98,6 +99,20 @@ export const UserService = {
     }
 
     if (!resolvedUser) resolvedUser = defaultUser;
+
+    // Se o usuário possui endereço em texto mas não tem os campos desmembrados
+    if (resolvedUser.address && (!resolvedUser.cep || !resolvedUser.street)) {
+      const parsed = parseAddressString(resolvedUser.address);
+      resolvedUser = {
+        ...resolvedUser,
+        cep: resolvedUser.cep || parsed.cep || undefined,
+        street: resolvedUser.street || parsed.street || undefined,
+        number: resolvedUser.number || parsed.number || undefined,
+        neighborhood: resolvedUser.neighborhood || parsed.neighborhood || undefined,
+        city: resolvedUser.city || parsed.city || undefined,
+        state: resolvedUser.state || parsed.state || undefined,
+      };
+    }
 
     // Garante que o ID é um UUID válido para banco relacional
     if (!isValidUUID(resolvedUser.id)) {

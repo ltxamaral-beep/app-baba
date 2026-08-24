@@ -37,6 +37,12 @@ export interface UserProfile {
   email: string;
   phone: string;
   cpf: string;
+  cep?: string;
+  street?: string;
+  number?: string;
+  neighborhood?: string;
+  city?: string;
+  state?: string;
   address: string;
   avatarUrl?: string;
   mainPosition: UserPosition;

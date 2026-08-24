@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { UserService, GroupService } from '@/lib/services/storage-service';
 import { UserProfile, UserPosition, DominantFoot } from '@/types';
 import { maskPhone, maskCEP } from '@/lib/utils/masks';
-import { fetchAddressByCEP } from '@/lib/utils/cep-service';
+import { fetchAddressByCEP, parseAddressString } from '@/lib/utils/cep-service';
 import { showToast } from '@/components/ui/Toast';
 import { AvatarUpload } from '@/components/profile/AvatarUpload';
 import { 
@@ -53,6 +53,8 @@ export default function ProfilePage() {
   useEffect(() => {
     const current = UserService.getCurrentUser();
     setUser(current);
+    const parsedAddr = parseAddressString(current.address);
+
     setFormData({
       name: current.name || '',
       nickname: current.nickname || '',
@@ -60,12 +62,12 @@ export default function ProfilePage() {
       email: current.email || '',
       phone: current.phone || '',
       cpf: current.cpf || '',
-      cep: '',
-      street: '',
-      number: '',
-      neighborhood: '',
-      city: '',
-      state: '',
+      cep: current.cep || parsedAddr.cep || '',
+      street: current.street || parsedAddr.street || '',
+      number: current.number || parsedAddr.number || '',
+      neighborhood: current.neighborhood || parsedAddr.neighborhood || '',
+      city: current.city || parsedAddr.city || '',
+      state: current.state || parsedAddr.state || '',
       address: current.address || '',
       mainPosition: current.mainPosition || 'meia',
       secondaryPosition: current.secondaryPosition || '',
@@ -136,6 +138,12 @@ export default function ProfilePage() {
         avatarUrl: formData.avatarUrl || undefined,
         email: formData.email,
         phone: formData.phone,
+        cep: formData.cep,
+        street: formData.street,
+        number: formData.number,
+        neighborhood: formData.neighborhood,
+        city: formData.city,
+        state: formData.state,
         address: formData.address,
         mainPosition: formData.mainPosition,
         secondaryPosition: formData.secondaryPosition || undefined,
@@ -147,12 +155,19 @@ export default function ProfilePage() {
       setUser(updated);
       setFormData((prev) => ({
         ...prev,
+        cep: updated.cep || prev.cep,
+        street: updated.street || prev.street,
+        number: updated.number || prev.number,
+        neighborhood: updated.neighborhood || prev.neighborhood,
+        city: updated.city || prev.city,
+        state: updated.state || prev.state,
+        address: updated.address || prev.address,
         mainPosition: updated.mainPosition,
         secondaryPosition: updated.secondaryPosition || '',
         dominantFoot: updated.dominantFoot || 'destro',
       }));
       setSavedSuccess(true);
-      showToast('Perfil, foto e características atualizados com sucesso! ✅', 'success');
+      showToast('Perfil, endereço e características salvos com sucesso! ✅', 'success');
       setTimeout(() => setSavedSuccess(false), 4000);
     } catch (err) {
       console.error(err);
@@ -186,7 +201,7 @@ export default function ProfilePage() {
         {savedSuccess && (
           <div className="bg-emerald-950/80 border border-emerald-500/50 text-emerald-300 text-xs px-3.5 py-2 rounded-xl flex items-center gap-2 shadow-lg">
             <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-            Perfil atualizado com sucesso!
+            Perfil e endereço atualizados com sucesso!
           </div>
         )}
       </div>

@@ -32,3 +32,54 @@ export async function fetchAddressByCEP(cepInput: string): Promise<ViaCEPRespons
     return null;
   }
 }
+
+/**
+ * Desmembra string de endereço completo em campos individuais (CEP, rua, número, bairro, cidade, UF)
+ */
+export function parseAddressString(addressStr?: string) {
+  if (!addressStr) {
+    return { cep: '', street: '', number: '', neighborhood: '', city: '', state: '' };
+  }
+
+  let cep = '';
+  const cepMatch = addressStr.match(/CEP:?\s*([\d.-]+)/i);
+  if (cepMatch) {
+    cep = cepMatch[1].trim();
+  }
+
+  // Remove trecho do CEP
+  const clean = addressStr.replace(/\(CEP:?[^)]*\)/i, '').trim();
+
+  let state = '';
+  let rest = clean;
+  const stateMatch = clean.match(/-\s*([A-Za-z]{2})\s*$/);
+  if (stateMatch) {
+    state = stateMatch[1].trim().toUpperCase();
+    rest = clean.replace(/-\s*[A-Za-z]{2}\s*$/, '').trim();
+  }
+
+  const parts = rest.split(',').map((p) => p.trim()).filter(Boolean);
+  let street = '';
+  let number = '';
+  let neighborhood = '';
+  let city = '';
+
+  if (parts.length >= 4) {
+    street = parts[0];
+    number = parts[1];
+    neighborhood = parts[2];
+    city = parts.slice(3).join(', ');
+  } else if (parts.length === 3) {
+    street = parts[0];
+    neighborhood = parts[1];
+    city = parts[2];
+  } else if (parts.length === 2) {
+    street = parts[0];
+    city = parts[1];
+  } else if (parts.length === 1) {
+    street = parts[0];
+  }
+
+  return { cep, street, number, neighborhood, city, state };
+}
+
