@@ -254,18 +254,23 @@ export default function PeladaHubPage({ params }: { params: { groupId: string } 
     loadData();
   };
 
-  const handleUpdateSlotsDirect = (e: React.FormEvent) => {
+  const handleUpdateSlotsDirect = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!group) return;
     const slots = Number(newSlotsValue) || 24;
+
+    // Atualiza estado local na UI imediatamente
+    setGroup((prev) => prev ? { ...prev, maxSlots: slots } : prev);
     if (activeMatch) {
-      MatchService.updateMatchMaxPlayers(group.id, activeMatch.id, slots);
+      setActiveMatch((prev) => prev ? { ...prev, maxPlayers: slots } : prev);
+      await MatchService.updateMatchMaxPlayers(group.id, activeMatch.id, slots);
     } else {
-      GroupService.updateGroup(group.id, { maxSlots: slots });
+      await GroupService.updateGroup(group.id, { maxSlots: slots });
     }
+
     setEditSlotsModalOpen(false);
     showToast(`Limite atualizado para ${slots} vagas! ⚽`, 'success');
-    loadData();
+    await loadData();
   };
 
   const handleAddGuestSubmit = (e: React.FormEvent) => {

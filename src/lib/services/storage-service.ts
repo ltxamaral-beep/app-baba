@@ -361,11 +361,11 @@ export const GroupService = {
     const existingLocal = idx !== -1 ? groups[idx] : null;
 
     let resolvedMaxSlots = 24;
-    if (existingLocal && existingLocal.maxSlots && Number(existingLocal.maxSlots) > 0) {
-      resolvedMaxSlots = Number(existingLocal.maxSlots);
-    } else if (matched.max_slots && Number(matched.max_slots) > 0) {
+    if (matched.max_slots && Number(matched.max_slots) > 0) {
       resolvedMaxSlots = Number(matched.max_slots);
-    } else if (matched.players_per_team) {
+    } else if (existingLocal && existingLocal.maxSlots && Number(existingLocal.maxSlots) > 0) {
+      resolvedMaxSlots = Number(existingLocal.maxSlots);
+    } else if (matched.players_per_team && Number(matched.players_per_team) > 0) {
       resolvedMaxSlots = Number(matched.players_per_team) * 3;
     }
 
@@ -1702,23 +1702,29 @@ export const MatchService = {
     }
   },
 
-  updateMatchMaxPlayers(groupId: string, matchId: string, maxPlayers: number): void {
+  async updateMatchMaxPlayers(groupId: string, matchId: string, maxPlayers: number): Promise<void> {
     const matches = this.getMatches(groupId);
     const target = matches.find((m) => m.id === matchId);
     if (target) {
       target.maxPlayers = maxPlayers;
       setStored(`matches_${groupId}`, matches);
     }
-    GroupService.updateGroup(groupId, { maxSlots: maxPlayers });
+    await GroupService.updateGroup(groupId, { maxSlots: maxPlayers });
 
-    if (isSupabaseConfigured && supabase && isValidUUID(matchId)) {
-      (async () => {
-        try {
+    if (isSupabaseConfigured && supabase) {
+      try {
+        if (isValidUUID(matchId)) {
           await supabase.from('matches').update({ max_players: maxPlayers }).eq('id', matchId);
-        } catch (err) {
-          console.warn('Erro ao atualizar max_players no Supabase:', err);
         }
-      })();
+        if (isValidUUID(groupId)) {
+          await supabase.from('groups').update({ 
+            max_slots: maxPlayers, 
+            players_per_team: Math.max(1, Math.round(maxPlayers / 3)) 
+          }).eq('id', groupId);
+        }
+      } catch (err) {
+        console.warn('Erro ao atualizar max_players no Supabase:', err);
+      }
     }
   },
 
