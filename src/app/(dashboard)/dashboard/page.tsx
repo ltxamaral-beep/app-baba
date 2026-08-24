@@ -180,6 +180,21 @@ export default function DashboardPage() {
     };
   }, []);
 
+  // Anos disponíveis (Hook chamado sempre no topo)
+  const availableYears = useMemo(() => getAvailableYears(transactions), [transactions]);
+
+  // Transações filtradas pelo período selecionado no Dashboard (Hook chamado sempre no topo)
+  const periodFilteredTransactions = useMemo(() => {
+    return (transactions || []).filter((t) => matchTransactionPeriod(t, financePeriodType, financeSelectedYear, financeSelectedMonth));
+  }, [transactions, financePeriodType, financeSelectedYear, financeSelectedMonth]);
+
+  const currentPeriodLabel = useMemo(() => {
+    if (financePeriodType === 'all') return 'Todo o Histórico (Geral)';
+    if (financePeriodType === 'yearly') return `Ano de ${financeSelectedYear}`;
+    const mName = MONTH_NAMES[(financeSelectedMonth || 1) - 1] || 'Mês';
+    return `${mName} de ${financeSelectedYear}`;
+  }, [financePeriodType, financeSelectedMonth, financeSelectedYear]);
+
   // -------------------------------------------------------------
   // ESTADO 1: NOVO USUÁRIO COM 0 GRUPOS (ONBOARDING)
   // -------------------------------------------------------------
@@ -278,14 +293,6 @@ export default function DashboardPage() {
   const maxSlots = nextMatch?.maxPlayers || activeGroup?.maxSlots || 24;
   const isAttendanceOpen = !!(activeGroup?.isOpenAttendance && nextMatch);
 
-  // Anos disponíveis
-  const availableYears = useMemo(() => getAvailableYears(transactions), [transactions]);
-
-  // Transações filtradas pelo período selecionado no Dashboard
-  const periodFilteredTransactions = useMemo(() => {
-    return transactions.filter((t) => matchTransactionPeriod(t, financePeriodType, financeSelectedYear, financeSelectedMonth));
-  }, [transactions, financePeriodType, financeSelectedYear, financeSelectedMonth]);
-
   // Cálculos Financeiros do Período Selecionado
   const periodIncome = periodFilteredTransactions
     .filter((t) => t.type === 'income' && t.status === 'paid')
@@ -298,20 +305,14 @@ export default function DashboardPage() {
   const periodNet = periodIncome - periodExpenses;
 
   // Saldo Total Geral Acumulado no Caixa
-  const totalAllTimeIncome = transactions.filter((t) => t.type === 'income' && t.status === 'paid').reduce((a, b) => a + b.amount, 0);
-  const totalAllTimeExpenses = transactions.filter((t) => t.type === 'expense' && t.status === 'paid').reduce((a, b) => a + b.amount, 0);
+  const totalAllTimeIncome = (transactions || []).filter((t) => t.type === 'income' && t.status === 'paid').reduce((a, b) => a + b.amount, 0);
+  const totalAllTimeExpenses = (transactions || []).filter((t) => t.type === 'expense' && t.status === 'paid').reduce((a, b) => a + b.amount, 0);
   const netBalance = totalAllTimeIncome - totalAllTimeExpenses;
 
   // Membros Inadimplentes / Débitos Pendentes
   const overdueTransactions = periodFilteredTransactions.filter((t) => t.type === 'income' && (t.status === 'pending' || t.status === 'overdue'));
-  const allOverdueTransactions = transactions.filter((t) => t.type === 'income' && (t.status === 'pending' || t.status === 'overdue'));
-  const userPendingTransaction = transactions.find((t) => t.userId === user?.id && t.status !== 'paid');
-
-  const currentPeriodLabel = useMemo(() => {
-    if (financePeriodType === 'all') return 'Todo o Histórico (Geral)';
-    if (financePeriodType === 'yearly') return `Ano de ${financeSelectedYear}`;
-    return `${MONTH_NAMES[financeSelectedMonth - 1]} de ${financeSelectedYear}`;
-  }, [financePeriodType, financeSelectedMonth, financeSelectedYear]);
+  const allOverdueTransactions = (transactions || []).filter((t) => t.type === 'income' && (t.status === 'pending' || t.status === 'overdue'));
+  const userPendingTransaction = (transactions || []).find((t) => t.userId === user?.id && t.status !== 'paid');
 
   const isPresident = currentMember?.role === 'presidente' || activeGroup?.createdBy === user?.id;
 
