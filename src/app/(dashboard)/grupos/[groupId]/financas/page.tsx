@@ -367,37 +367,21 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
     return `${MONTH_NAMES[selectedMonth - 1]} de ${selectedYear}`;
   }, [periodType, selectedMonth, selectedYear]);
 
-  // Se o usuário não for da diretoria (Presidente, ADM, Tesoureiro), bloqueia a visualização detalhada
-  if (currentMember && !isDirector) {
-    return (
-      <div className="max-w-xl mx-auto text-center py-12 space-y-4">
-        <div className="w-16 h-16 rounded-2xl bg-amber-500/15 border border-amber-500/30 text-amber-400 flex items-center justify-center text-2xl mx-auto">
-          🔒
-        </div>
-        <h1 className="text-2xl font-black text-white">Acesso Restrito à Diretoria</h1>
-        <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
-          O módulo financeiro detalhado e lançamentos de caixa são visíveis apenas para o <strong>Presidente</strong>, <strong>ADM</strong> ou <strong>Tesoureiro</strong> do grupo.
-        </p>
-        <div className="pt-2">
-          <a
-            href="/dashboard"
-            className="inline-flex items-center gap-2 bg-slate-900 hover:bg-slate-800 border border-slate-800 text-white font-bold px-4 py-2 rounded-xl text-xs"
-          >
-            Voltar ao Painel Geral
-          </a>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-6 pb-12 max-w-4xl mx-auto select-none">
       
       {/* Cabeçalho Moderno do Painel Financeiro */}
       <div className="bg-[#121e2b] border border-[#1e3247] rounded-3xl p-5 sm:p-6 shadow-xl relative overflow-hidden flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#00b49f]/15 text-[#00b49f] text-[10px] font-bold uppercase tracking-wider mb-2">
-            <Coins className="w-3.5 h-3.5" /> Módulo Financeiro
+          <div className="flex items-center gap-2 flex-wrap mb-2">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#00b49f]/15 text-[#00b49f] text-[10px] font-bold uppercase tracking-wider">
+              <Coins className="w-3.5 h-3.5" /> Módulo Financeiro
+            </span>
+            {!isDirector && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-300 text-[10px] font-bold border border-slate-700">
+                👁️ Transparência do Grupo (Visualização)
+              </span>
+            )}
           </div>
           <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight">
             Controle de Caixa & Mensalidades
@@ -407,28 +391,34 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
           </p>
         </div>
 
-        {/* Botões Rápidos de Ação */}
-        <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
-          <button
-            onClick={() => {
-              setActiveTab('mensalidade');
-              setModalOpen(true);
-            }}
-            className="flex-1 sm:flex-none inline-flex items-center justify-center gap-2 bg-[#00b49f] hover:bg-[#00cba9] text-slate-950 font-black px-4 py-2.5 rounded-xl text-xs shadow-lg shadow-[#00b49f]/20 transition-all active:scale-[0.98]"
-          >
-            <Zap className="w-4 h-4 fill-slate-950" /> Mensalidades
-          </button>
+        {/* Botões Rápidos de Ação (Apenas para Diretoria: Presidente, ADM ou Tesoureiro) */}
+        {isDirector ? (
+          <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+            <button
+              onClick={() => {
+                setActiveTab('mensalidade');
+                setModalOpen(true);
+              }}
+              className="flex-1 sm:flex-none inline-flex items-center justify-center gap-2 bg-[#00b49f] hover:bg-[#00cba9] text-slate-950 font-black px-4 py-2.5 rounded-xl text-xs shadow-lg shadow-[#00b49f]/20 transition-all active:scale-[0.98]"
+            >
+              <Zap className="w-4 h-4 fill-slate-950" /> Mensalidades
+            </button>
 
-          <button
-            onClick={() => {
-              setActiveTab('lancamento_geral');
-              setModalOpen(true);
-            }}
-            className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 bg-[#182737] hover:bg-[#1e3247] border border-[#22384f] text-white font-bold px-3.5 py-2.5 rounded-xl text-xs transition-all active:scale-[0.98]"
-          >
-            <Plus className="w-4 h-4 text-[#00b49f]" /> Nova Entrada/Saída
-          </button>
-        </div>
+            <button
+              onClick={() => {
+                setActiveTab('lancamento_geral');
+                setModalOpen(true);
+              }}
+              className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 bg-[#182737] hover:bg-[#1e3247] border border-[#22384f] text-white font-bold px-3.5 py-2.5 rounded-xl text-xs transition-all active:scale-[0.98]"
+            >
+              <Plus className="w-4 h-4 text-[#00b49f]" /> Nova Entrada/Saída
+            </button>
+          </div>
+        ) : (
+          <div className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-900/90 border border-slate-800 text-slate-300 text-xs font-semibold">
+            <span>Prestação de Contas Aberta</span>
+          </div>
+        )}
       </div>
 
       {/* Alerta / Notificação */}
@@ -596,14 +586,20 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
                     <p className="text-[11px] text-rose-400 font-semibold">{m.blockedReason || 'Débito em aberto'}</p>
                     <p className="text-[10px] text-slate-500">Valor: {pendingTrans ? formatCurrency(pendingTrans.amount) : 'R$ 80,00'}</p>
                   </div>
-                  <button
-                    onClick={() => {
-                      if (pendingTrans) handleSettle(pendingTrans.id);
-                    }}
-                    className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold px-3 py-1.5 rounded-lg text-xs flex items-center gap-1 shadow-sm transition-all active:scale-95"
-                  >
-                    <Unlock className="w-3.5 h-3.5" /> Dar Baixa
-                  </button>
+                  {isDirector ? (
+                    <button
+                      onClick={() => {
+                        if (pendingTrans) handleSettle(pendingTrans.id);
+                      }}
+                      className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold px-3 py-1.5 rounded-lg text-xs flex items-center gap-1 shadow-sm transition-all active:scale-95"
+                    >
+                      <Unlock className="w-3.5 h-3.5" /> Dar Baixa
+                    </button>
+                  ) : (
+                    <span className="text-[11px] font-bold text-amber-400 bg-amber-950/40 border border-amber-800/40 px-2.5 py-1 rounded-lg">
+                      Pendente
+                    </span>
+                  )}
                 </div>
               );
             })}
@@ -660,21 +656,22 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
                 <th className="pb-3 font-semibold text-right">Ações</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800/50">
+            <tbody className="divide-y divide-slate-800/60">
               {periodFilteredTransactions
                 .filter((t) => {
+                  if (activeFilter === 'all') return true;
                   if (activeFilter === 'inadimplentes') return t.status === 'pending' || t.status === 'overdue';
-                  if (activeFilter === 'cartoes') return ['cartao_azul', 'cartao_vermelho', 'multa_atraso', 'multa_falta', 'cartao_amarelo'].includes(t.category);
                   if (activeFilter === 'mensalidades') return t.category === 'mensalidade';
+                  if (activeFilter === 'cartoes') return ['cartao_azul', 'cartao_vermelho', 'cartao_amarelo', 'multa_atraso', 'multa_falta'].includes(t.category);
                   if (activeFilter === 'diarias') return t.category === 'diaria';
                   if (activeFilter === 'saldo_inicial') return t.category === 'saldo_inicial';
                   if (activeFilter === 'expenses') return t.type === 'expense';
                   return true;
                 })
                 .map((t) => {
-                  const isOverdue = t.status === 'overdue';
                   const isPaid = t.status === 'paid';
-                  const catInfo = CATEGORY_LABELS[t.category] || CATEGORY_LABELS.outros;
+                  const isOverdue = t.status === 'overdue' || (t.status === 'pending' && t.dueDate && new Date(t.dueDate) < new Date());
+                  const catInfo = CATEGORY_LABELS[t.category] || { label: t.category, icon: '📦', badgeColor: 'bg-slate-800 text-slate-300 border-slate-700' };
 
                   return (
                     <tr key={t.id} className="hover:bg-slate-800/20 transition-colors group">
@@ -707,33 +704,37 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
                         )}
                       </td>
                       <td className="py-3 text-right">
-                        <div className="flex items-center justify-end gap-1.5">
-                          {!isPaid && (
+                        {isDirector ? (
+                          <div className="flex items-center justify-end gap-1.5">
+                            {!isPaid && (
+                              <button
+                                onClick={() => handleSettle(t.id)}
+                                className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold px-2 py-1 rounded text-[10px] transition-colors shadow-sm inline-flex items-center gap-1"
+                                title="Dar baixa / Quitar"
+                              >
+                                <CheckCircle2 className="w-3 h-3" /> Baixar
+                              </button>
+                            )}
+
                             <button
-                              onClick={() => handleSettle(t.id)}
-                              className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold px-2 py-1 rounded text-[10px] transition-colors shadow-sm inline-flex items-center gap-1"
-                              title="Dar baixa / Quitar"
+                              onClick={() => handleStartEdit(t)}
+                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-[#00b49f] transition-all border border-slate-700/80"
+                              title="Editar lançamento"
                             >
-                              <CheckCircle2 className="w-3 h-3" /> Baixar
+                              <Edit3 className="w-3.5 h-3.5" />
                             </button>
-                          )}
 
-                          <button
-                            onClick={() => handleStartEdit(t)}
-                            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-[#00b49f] transition-all border border-slate-700/80"
-                            title="Editar lançamento"
-                          >
-                            <Edit3 className="w-3.5 h-3.5" />
-                          </button>
-
-                          <button
-                            onClick={() => handleDelete(t)}
-                            className="p-1.5 rounded-lg bg-rose-950/30 hover:bg-rose-900/60 text-rose-400 hover:text-rose-200 transition-all border border-rose-900/50"
-                            title="Excluir lançamento"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
+                            <button
+                              onClick={() => handleDelete(t)}
+                              className="p-1.5 rounded-lg bg-rose-950/30 hover:bg-rose-900/60 text-rose-400 hover:text-rose-200 transition-all border border-rose-900/50"
+                              title="Excluir lançamento"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="text-[10px] text-slate-500 font-semibold italic">Apenas Leitura</span>
+                        )}
                       </td>
                     </tr>
                   );

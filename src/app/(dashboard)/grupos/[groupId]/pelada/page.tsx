@@ -189,6 +189,7 @@ export default function PeladaHubPage({ params }: { params: { groupId: string } 
   if (!group) return <div className="p-8 text-center text-slate-400">Carregando pelada...</div>;
 
   const isDirector = currentMember?.role === 'presidente' || currentMember?.role === 'adm' || currentMember?.role === 'tesoureiro';
+  const isAttendanceOpen = !!((activeMatch && activeMatch.status === 'scheduled') || group.isOpenAttendance);
   const confirmedList = attendances.filter((a) => a.status === 'confirmed' || a.status === 'present');
   const waitlistList = attendances.filter((a) => a.status === 'waitlist');
   const guestList = attendances.filter((a) => a.isGuest && a.status !== 'cancelled');
@@ -433,7 +434,7 @@ export default function PeladaHubPage({ params }: { params: { groupId: string } 
             <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 font-bold border border-emerald-500/30 uppercase">
               {group.soccerType} • {group.matchDay} às {group.matchTime}
             </span>
-            {group.isOpenAttendance && activeMatch ? (
+            {isAttendanceOpen && activeMatch ? (
               <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-500 text-slate-950 font-black uppercase flex items-center gap-1 shadow-sm">
                 <Unlock className="w-3.5 h-3.5" /> Lista Aberta ({confirmedList.length}/{maxSlots} Vagas)
               </span>
@@ -443,7 +444,7 @@ export default function PeladaHubPage({ params }: { params: { groupId: string } 
               </span>
             )}
 
-            {group.isOpenAttendance && activeMatch && formattedDeadline && (
+            {isAttendanceOpen && activeMatch && formattedDeadline && (
               <span className={`text-xs px-2.5 py-0.5 rounded-full font-bold border flex items-center gap-1 ${
                 isDeadlinePassed
                   ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
@@ -466,7 +467,7 @@ export default function PeladaHubPage({ params }: { params: { groupId: string } 
             {/* Botão da Comissão: Abrir ou Encerrar Lista */}
             {isDirector && (
               <>
-                {!group.isOpenAttendance ? (
+                {!isAttendanceOpen ? (
                   <button
                     type="button"
                     onClick={() => setOpenModalOpen(true)}
@@ -499,7 +500,7 @@ export default function PeladaHubPage({ params }: { params: { groupId: string } 
             )}
 
             {/* Botão de Convidado: Disponível para associados confirmados ou diretoria */}
-            {group.isOpenAttendance && activeMatch && (userAttendance?.status === 'confirmed' || isDirector) && (
+            {isAttendanceOpen && activeMatch && (userAttendance?.status === 'confirmed' || isDirector) && (
               <button
                 type="button"
                 onClick={() => setGuestModalOpen(true)}
@@ -510,7 +511,7 @@ export default function PeladaHubPage({ params }: { params: { groupId: string } 
             )}
 
             {/* Botão do Atleta: Confirmar ou Cancelar Presença */}
-          {group.isOpenAttendance && activeMatch && (
+          {isAttendanceOpen && activeMatch && (
             <>
               {userAttendance && userAttendance.status !== 'cancelled' ? (
                 <button
@@ -602,13 +603,22 @@ export default function PeladaHubPage({ params }: { params: { groupId: string } 
       {/* ---------------------------------------------------------------- */}
       {activeTab === 'presenca' && (
         <div className="space-y-6">
-          {!group.isOpenAttendance && (
-            <div className="bg-amber-950/20 border border-amber-500/30 rounded-3xl p-6 text-center space-y-2">
+          {!isAttendanceOpen && (
+            <div className="bg-amber-950/20 border border-amber-500/30 rounded-3xl p-6 text-center space-y-3">
               <Lock className="w-8 h-8 text-amber-400 mx-auto" />
               <h3 className="text-base font-bold text-white">Lista de Presença Fechada</h3>
               <p className="text-xs text-slate-400 max-w-md mx-auto">
                 A comissão do grupo (Presidente, ADM ou Tesoureiro) abrirá a lista para a próxima pelada.
               </p>
+              {isDirector && (
+                <button
+                  type="button"
+                  onClick={() => setOpenModalOpen(true)}
+                  className="inline-flex items-center gap-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black px-4 py-2 rounded-xl text-xs shadow-md transition-all active:scale-95 mx-auto"
+                >
+                  <Zap className="w-4 h-4 fill-slate-950" /> Abrir Lista Agora
+                </button>
+              )}
             </div>
           )}
 
