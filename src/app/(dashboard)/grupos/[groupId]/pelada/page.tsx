@@ -92,7 +92,7 @@ export default function PeladaHubPage({ params }: { params: { groupId: string } 
   const [votesSubmitted, setVotesSubmitted] = useState(false);
   const [copiedList, setCopiedList] = useState(false);
 
-  const loadData = () => {
+  const loadData = async () => {
     const user = UserService.getCurrentUser();
     setCurrentUser(user);
 
@@ -149,11 +149,28 @@ export default function PeladaHubPage({ params }: { params: { groupId: string } 
           hasDeadline: true,
         }));
       }
+
+      // Sincroniza em segundo plano com a nuvem (Supabase)
+      try {
+        const cloudMatches = await MatchService.syncMatchesFromCloud(g.id);
+        if (cloudMatches && cloudMatches.length > 0) {
+          setMatches(cloudMatches);
+          const latest = cloudMatches[0];
+          setActiveMatch(latest);
+
+          const cloudAtts = await MatchService.syncAttendancesFromCloud(latest.id);
+          setAttendances(cloudAtts);
+        }
+      } catch (err) {
+        console.warn('Erro ao sincronizar partidas e presenças com Supabase:', err);
+      }
     }
   };
 
   useEffect(() => {
     loadData();
+    const interval = setInterval(loadData, 5000);
+    return () => clearInterval(interval);
   }, [groupId]);
 
   const [editSlotsModalOpen, setEditSlotsModalOpen] = useState(false);

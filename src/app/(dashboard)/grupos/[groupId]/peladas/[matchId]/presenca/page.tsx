@@ -3,8 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { MatchService, GroupService } from '@/lib/services/storage-service';
-import { mockUsers } from '@/lib/mock-data';
+import { MatchService, GroupService, UserService } from '@/lib/services/storage-service';
 import { Match, MatchAttendance, UserProfile, UserPosition, DominantFoot } from '@/types';
 import { 
   Users, 
@@ -34,7 +33,7 @@ export default function AttendancePage({ params }: { params: { groupId: string; 
   const [match, setMatch] = useState<Match | null>(null);
   const [group, setGroup] = useState<any>(null);
   const [attendances, setAttendances] = useState<MatchAttendance[]>([]);
-  const [activeUser, setActiveUser] = useState<UserProfile>(mockUsers[0]);
+  const [activeUser, setActiveUser] = useState<UserProfile>(UserService.getCurrentUser());
   const [notification, setNotification] = useState<string | null>(null);
   const [copiedList, setCopiedList] = useState(false);
 
@@ -48,10 +47,33 @@ export default function AttendancePage({ params }: { params: { groupId: string; 
     phone: '',
   });
 
-  useEffect(() => {
-    setMatch(MatchService.getMatchById(params.matchId) || null);
+  const loadData = async () => {
+    const u = UserService.getCurrentUser();
+    setActiveUser(u);
+
+    // Carrega dados locais imediatamente
+    const currentMatch = MatchService.getMatchById(params.matchId) || null;
+    setMatch(currentMatch);
     setGroup(GroupService.getGroupById(params.groupId) || null);
     setAttendances(MatchService.getAttendances(params.matchId));
+
+    // Sincroniza partidas e presenças com o Supabase
+    try {
+      const cloudMatches = await MatchService.syncMatchesFromCloud(params.groupId);
+      const targetM = cloudMatches.find((m) => m.id === params.matchId) || currentMatch;
+      if (targetM) setMatch(targetM);
+
+      const cloudAtts = await MatchService.syncAttendancesFromCloud(params.matchId);
+      setAttendances(cloudAtts);
+    } catch (e) {
+      console.warn('Erro ao sincronizar presença com nuvem:', e);
+    }
+  };
+
+  useEffect(() => {
+    loadData();
+    const interval = setInterval(loadData, 4000);
+    return () => clearInterval(interval);
   }, [params.matchId, params.groupId]);
 
   if (!match) return <div className="p-8 text-center text-slate-400">Carregando lista...</div>;

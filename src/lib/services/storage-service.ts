@@ -1472,6 +1472,56 @@ export const MatchService = {
     return undefined;
   },
 
+  async syncMatchesFromCloud(groupId: string): Promise<Match[]> {
+    const local = this.getMatches(groupId);
+    if (!isSupabaseConfigured || !supabase || !groupId) return local;
+
+    try {
+      const { data, error } = await supabase
+        .from('matches')
+        .select('*')
+        .eq('group_id', groupId)
+        .order('match_date', { ascending: false });
+
+      if (error || !data) return local;
+
+      const remoteMatches: Match[] = data.map((m: any) => ({
+        id: m.id,
+        groupId: m.group_id,
+        matchDate: m.match_date,
+        startTime: m.start_time ? m.start_time.substring(0, 5) : '20:00',
+        confirmationDeadline: m.confirmation_deadline || undefined,
+        maxPlayers: m.max_players || 24,
+        costDiarista: m.cost_diarista ? Number(m.cost_diarista) : 25,
+        status: m.status || 'scheduled',
+        createdAt: m.created_at || new Date().toISOString(),
+      }));
+
+      const map = new Map<string, Match>();
+      remoteMatches.forEach((m) => map.set(m.id, m));
+      local.forEach((m) => {
+        if (!map.has(m.id)) map.set(m.id, m);
+      });
+
+      const merged = Array.from(map.values()).sort(
+        (a, b) => new Date(b.matchDate + 'T' + (b.startTime || '00:00')).getTime() - new Date(a.matchDate + 'T' + (a.startTime || '00:00')).getTime()
+      );
+
+      setStored(`matches_${groupId}`, merged);
+
+      const hasOpenMatch = merged.some((m) => m.status === 'scheduled');
+      const g = GroupService.getGroupById(groupId);
+      if (g && g.isOpenAttendance !== hasOpenMatch) {
+        GroupService.updateGroup(groupId, { isOpenAttendance: hasOpenMatch });
+      }
+
+      return merged;
+    } catch (err) {
+      console.warn('Erro ao sincronizar partidas do Supabase:', err);
+      return local;
+    }
+  },
+
   openMatchAttendance(
     groupId: string, 
     matchDate: string, 
@@ -1481,8 +1531,9 @@ export const MatchService = {
     confirmationDeadline?: string
   ): Match {
     const matches = this.getMatches(groupId);
+    const newMatchId = generateUUID();
     const newMatch: Match = {
-      id: generateUUID(),
+      id: newMatchId,
       groupId,
       matchDate,
       startTime,
@@ -1498,9 +1549,28 @@ export const MatchService = {
     // Marca o grupo como lista aberta
     GroupService.updateGroup(groupId, { isOpenAttendance: true, maxSlots: maxPlayers });
 
+    // Sincroniza partida no Supabase
+    if (isSupabaseConfigured && supabase) {
+      (async () => {
+        try {
+          await supabase.from('matches').upsert([{
+            id: newMatch.id,
+            group_id: groupId,
+            match_date: matchDate,
+            start_time: startTime.length === 5 ? `${startTime}:00` : startTime,
+            confirmation_deadline: confirmationDeadline || null,
+            max_players: maxPlayers,
+            cost_diarista: costDiarista,
+            status: 'scheduled',
+          }]);
+        } catch (err) {
+          console.warn('Erro ao salvar partida no Supabase:', err);
+        }
+      })();
+    }
+
     // Dispara notificação oficial para todos os associados do grupo
     try {
-      const group = GroupService.getGroupById(groupId);
       let deadlineText = '';
       if (confirmationDeadline) {
         try {
@@ -1535,6 +1605,16 @@ export const MatchService = {
       setStored(`matches_${groupId}`, matches);
     }
     GroupService.updateGroup(groupId, { isOpenAttendance: false });
+
+    if (isSupabaseConfigured && supabase) {
+      (async () => {
+        try {
+          await supabase.from('matches').update({ status: 'in_progress' }).eq('id', matchId);
+        } catch (err) {
+          console.warn('Erro ao fechar presença no Supabase:', err);
+        }
+      })();
+    }
   },
 
   updateMatchMaxPlayers(groupId: string, matchId: string, maxPlayers: number): void {
@@ -1545,10 +1625,103 @@ export const MatchService = {
       setStored(`matches_${groupId}`, matches);
     }
     GroupService.updateGroup(groupId, { maxSlots: maxPlayers });
+
+    if (isSupabaseConfigured && supabase) {
+      (async () => {
+        try {
+          await supabase.from('matches').update({ max_players: maxPlayers }).eq('id', matchId);
+        } catch (err) {
+          console.warn('Erro ao atualizar max_players no Supabase:', err);
+        }
+      })();
+    }
   },
 
   getAttendances(matchId: string): MatchAttendance[] {
     return getStored<MatchAttendance[]>(`attendances_${matchId}`, []);
+  },
+
+  async syncAttendancesFromCloud(matchId: string): Promise<MatchAttendance[]> {
+    const local = this.getAttendances(matchId);
+    if (!isSupabaseConfigured || !supabase || !matchId) return local;
+
+    try {
+      const { data, error } = await supabase
+        .from('match_attendances')
+        .select(`
+          id,
+          match_id,
+          user_id,
+          status,
+          arrival_order,
+          is_financial_blocked,
+          confirmed_at,
+          checked_in_at,
+          users (
+            id,
+            name,
+            nickname,
+            email,
+            phone,
+            cpf,
+            address,
+            avatar_url,
+            main_position,
+            secondary_position,
+            dominant_foot,
+            overall_rating,
+            created_at
+          )
+        `)
+        .eq('match_id', matchId);
+
+      if (error || !data) return local;
+
+      const remoteAttendances: MatchAttendance[] = data.map((row: any) => {
+        const u = Array.isArray(row.users) ? row.users[0] : row.users;
+        const fallbackUser: UserProfile = {
+          id: row.user_id,
+          name: u?.name || 'Atleta',
+          nickname: u?.nickname || undefined,
+          email: u?.email || '',
+          phone: u?.phone || '',
+          cpf: u?.cpf || '',
+          address: u?.address || '',
+          avatarUrl: u?.avatar_url || undefined,
+          mainPosition: (u?.main_position as any) || 'meia',
+          secondaryPosition: (u?.secondary_position as any) || undefined,
+          dominantFoot: (u?.dominant_foot as any) || 'destro',
+          overallRating: u?.overall_rating ? Number(u.overall_rating) : 6.5,
+          createdAt: u?.created_at || new Date().toISOString(),
+        };
+
+        return {
+          id: row.id,
+          matchId: row.match_id,
+          userId: row.user_id,
+          user: fallbackUser,
+          status: row.status as any,
+          arrivalOrder: row.arrival_order || undefined,
+          isFinancialBlocked: row.is_financial_blocked || false,
+          isGuest: typeof row.user_id === 'string' && row.user_id.startsWith('guest_'),
+          confirmedAt: row.confirmed_at || new Date().toISOString(),
+          checkedInAt: row.checked_in_at || undefined,
+        };
+      });
+
+      const map = new Map<string, MatchAttendance>();
+      remoteAttendances.forEach((a) => map.set(a.userId, a));
+      local.forEach((a) => {
+        if (!map.has(a.userId)) map.set(a.userId, a);
+      });
+
+      const merged = Array.from(map.values());
+      setStored(`attendances_${matchId}`, merged);
+      return merged;
+    } catch (err) {
+      console.warn('Erro ao sincronizar presenças do Supabase:', err);
+      return local;
+    }
   },
 
   confirmAttendance(matchId: string, user: UserProfile, maxPlayers: number, groupId?: string): MatchAttendance {
@@ -1568,8 +1741,9 @@ export const MatchService = {
     const confirmedCount = attendances.filter((a) => a.status === 'confirmed' || a.status === 'present').length;
     const isWaitlist = isExpiredDeadline || confirmedCount >= maxPlayers;
 
+    const attendanceId = existing ? existing.id : generateUUID();
     const newAttendance: MatchAttendance = {
-      id: existing ? existing.id : generateUUID(),
+      id: attendanceId,
       matchId,
       userId: user.id,
       user,
@@ -1585,6 +1759,25 @@ export const MatchService = {
       attendances.push(newAttendance);
     }
     setStored(`attendances_${matchId}`, attendances);
+
+    // Sincroniza presença no Supabase
+    if (isSupabaseConfigured && supabase) {
+      (async () => {
+        try {
+          const validUserId = await UserService.ensureUserInCloud(user);
+          await supabase.from('match_attendances').upsert([{
+            id: attendanceId,
+            match_id: matchId,
+            user_id: validUserId,
+            status: newAttendance.status,
+            is_financial_blocked: false,
+            confirmed_at: newAttendance.confirmedAt,
+          }], { onConflict: 'match_id,user_id' });
+        } catch (err) {
+          console.warn('Erro ao salvar presença no Supabase:', err);
+        }
+      })();
+    }
 
     // Dispara notificação da lista de presença
     try {
@@ -1617,6 +1810,16 @@ export const MatchService = {
     target.status = 'confirmed';
     setStored(`attendances_${matchId}`, attendances);
 
+    if (isSupabaseConfigured && supabase) {
+      (async () => {
+        try {
+          await supabase.from('match_attendances').update({ status: 'confirmed' }).eq('id', target.id);
+        } catch (err) {
+          console.warn('Erro ao promover presença no Supabase:', err);
+        }
+      })();
+    }
+
     try {
       const match = this.getMatchById(matchId);
       const gid = match?.groupId || GroupService.getActiveGroupId() || '';
@@ -1644,6 +1847,17 @@ export const MatchService = {
 
     target.status = 'waitlist';
     setStored(`attendances_${matchId}`, attendances);
+
+    if (isSupabaseConfigured && supabase) {
+      (async () => {
+        try {
+          await supabase.from('match_attendances').update({ status: 'waitlist' }).eq('id', target.id);
+        } catch (err) {
+          console.warn('Erro ao rebaixar presença no Supabase:', err);
+        }
+      })();
+    }
+
     return target;
   },
 
@@ -1679,8 +1893,9 @@ export const MatchService = {
       createdAt: new Date().toISOString(),
     };
 
+    const attendanceId = generateUUID();
     const newAttendance: MatchAttendance = {
-      id: generateUUID(),
+      id: attendanceId,
       matchId,
       userId: guestUserId,
       user: guestProfile,
@@ -1743,18 +1958,35 @@ export const MatchService = {
     if (leavingIdx === -1) return {};
 
     const wasConfirmed = attendances[leavingIdx].status === 'confirmed';
+    const leavingId = attendances[leavingIdx].id;
     attendances[leavingIdx].status = 'cancelled';
 
     let promotedUser: UserProfile | undefined;
+    let promotedId: string | undefined;
     if (wasConfirmed) {
       const waitlistCandidate = attendances.find((a) => a.status === 'waitlist');
       if (waitlistCandidate) {
         waitlistCandidate.status = 'confirmed';
         promotedUser = waitlistCandidate.user;
+        promotedId = waitlistCandidate.id;
       }
     }
 
     setStored(`attendances_${matchId}`, attendances);
+
+    if (isSupabaseConfigured && supabase) {
+      (async () => {
+        try {
+          await supabase.from('match_attendances').update({ status: 'cancelled' }).eq('id', leavingId);
+          if (promotedId) {
+            await supabase.from('match_attendances').update({ status: 'confirmed' }).eq('id', promotedId);
+          }
+        } catch (err) {
+          console.warn('Erro ao cancelar presença no Supabase:', err);
+        }
+      })();
+    }
+
     return { promotedUser };
   },
 
@@ -1766,6 +1998,20 @@ export const MatchService = {
       target.arrivalOrder = order;
       target.checkedInAt = new Date().toISOString();
       setStored(`attendances_${matchId}`, attendances);
+
+      if (isSupabaseConfigured && supabase) {
+        (async () => {
+          try {
+            await supabase.from('match_attendances').update({
+              status: 'present',
+              arrival_order: order,
+              checked_in_at: target.checkedInAt
+            }).eq('id', target.id);
+          } catch (err) {
+            console.warn('Erro ao registrar check-in no Supabase:', err);
+          }
+        })();
+      }
 
       try {
         const gid = groupId || GroupService.getActiveGroupId() || '';

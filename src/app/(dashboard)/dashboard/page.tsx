@@ -145,11 +145,22 @@ export default function DashboardPage() {
       setUserGroups(cloudGroups);
 
       const newActiveId = GroupService.getActiveGroupId();
+      let targetG = currentActive;
       if (newActiveId && cloudGroups.some((g) => g.group.id === newActiveId)) {
         const found = cloudGroups.find((g) => g.group.id === newActiveId);
         if (found) {
+          targetG = found.group;
           setActiveGroup(found.group);
           setCurrentMember(found.member);
+        }
+      }
+
+      if (targetG) {
+        const cloudMatches = await MatchService.syncMatchesFromCloud(targetG.id);
+        if (cloudMatches && cloudMatches.length > 0) {
+          setNextMatch(cloudMatches[0]);
+          const cloudAtts = await MatchService.syncAttendancesFromCloud(cloudMatches[0].id);
+          setAttendances(cloudAtts);
         }
       }
     } catch (e) {
