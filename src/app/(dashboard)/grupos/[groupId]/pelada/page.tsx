@@ -131,8 +131,14 @@ export default function PeladaHubPage({ params }: { params: { groupId: string } 
       // 2. Sincroniza partidas e presenças com o Supabase prioritariamente
       try {
         const cloudMatches = await MatchService.syncMatchesFromCloud(g.id);
-        if (cloudMatches && cloudMatches.length > 0) {
+        if (cloudMatches) {
           setMatches(cloudMatches);
+          if (cloudMatches.length === 0) {
+            setActiveMatch(null);
+            setAttendances([]);
+            setGroup((prev) => prev ? { ...prev, isOpenAttendance: false } : prev);
+            return;
+          }
           const openMatch = cloudMatches.find((m) => m.status === 'scheduled') || cloudMatches[0];
           setActiveMatch(openMatch);
           const hasOpen = cloudMatches.some((m) => m.status === 'scheduled');
@@ -305,19 +311,22 @@ export default function PeladaHubPage({ params }: { params: { groupId: string } 
       confirmationDeadline = `${editMatchData.deadlineDate}T${editMatchData.deadlineTime || '12:00'}:00`;
     }
 
-    const updated = await MatchService.updateMatch(group.id, activeMatch.id, {
-      matchDate: editMatchData.matchDate,
-      startTime: editMatchData.startTime,
-      maxPlayers: Number(editMatchData.maxPlayers) || 20,
-      costDiarista: Number(editMatchData.costDiarista) || 25,
-      confirmationDeadline,
-    });
+    try {
+      const updated = await MatchService.updateMatch(group.id, activeMatch.id, {
+        matchDate: editMatchData.matchDate,
+        startTime: editMatchData.startTime,
+        maxPlayers: Number(editMatchData.maxPlayers) || 20,
+        costDiarista: Number(editMatchData.costDiarista) || 25,
+        confirmationDeadline,
+      });
 
-    if (updated) {
+      if (!updated) throw new Error('Lista nao encontrada.');
       setActiveMatch(updated);
       setEditMatchModalOpen(false);
       showToast('Informações da lista de presença atualizadas com sucesso! ✅', 'success');
       await loadData();
+    } catch (err: any) {
+      showToast(err?.message || 'Erro ao editar a lista.', 'error');
     }
   };
 
@@ -328,11 +337,16 @@ export default function PeladaHubPage({ params }: { params: { groupId: string } 
     );
     if (!confirmDelete) return;
 
-    await MatchService.deleteMatch(group.id, activeMatch.id);
-    setActiveMatch(null);
-    setAttendances([]);
-    showToast('Lista de presença excluída com sucesso. 🗑️', 'info');
-    await loadData();
+    try {
+      const deleted = await MatchService.deleteMatch(group.id, activeMatch.id);
+      if (!deleted) throw new Error('Lista nao encontrada.');
+      setActiveMatch(null);
+      setAttendances([]);
+      showToast('Lista de presença excluída com sucesso. 🗑️', 'info');
+      await loadData();
+    } catch (err: any) {
+      showToast(err?.message || 'Erro ao excluir a lista.', 'error');
+    }
   };
 
   const handleRemoveAthlete = async (attendanceId: string, athleteName: string) => {
@@ -421,9 +435,13 @@ export default function PeladaHubPage({ params }: { params: { groupId: string } 
 
   const handleConfirmPresence = async () => {
     if (!activeMatch || !currentUser) return;
-    await MatchService.confirmAttendance(activeMatch.id, currentUser, maxSlots, group?.id);
-    showToast('Sua presença foi confirmada na pelada! ⚽', 'success');
-    await loadData();
+    try {
+      await MatchService.confirmAttendance(activeMatch.id, currentUser, maxSlots, group?.id);
+      showToast('Sua presença foi confirmada na pelada! ⚽', 'success');
+      await loadData();
+    } catch (err: any) {
+      showToast(err?.message || 'Erro ao confirmar presenca.', 'error');
+    }
   };
 
   const handleCancelPresence = async () => {

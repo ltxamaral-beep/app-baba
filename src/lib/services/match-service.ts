@@ -81,54 +81,21 @@ export const MatchService = {
     if (!isSupabaseConfigured || !supabase || !groupId) return local;
 
     try {
-      // 1. Garante que partidas locais válidas sejam sincronizadas para o Supabase
-      if (isValidUUID(groupId) && local.length > 0) {
-        for (const lm of local) {
-          try {
-            const rawTime = (lm.startTime || '20:00').trim();
-            const formattedTime = rawTime.includes(':')
-              ? (rawTime.split(':').length === 2 ? `${rawTime}:00` : rawTime)
-              : '20:00:00';
+      // O Supabase é a fonte oficial. Dados locais nunca são reenviados
+      // automaticamente, pois podem estar desatualizados em outro navegador.
+      if (!isValidUUID(groupId)) return local;
 
-            const formattedDeadline = lm.confirmationDeadline
-              ? new Date(lm.confirmationDeadline).toISOString()
-              : null;
-
-            await withTimeout(
-              supabase.from('matches').upsert([{
-                id: isValidUUID(lm.id) ? lm.id : generateUUID(),
-                group_id: groupId,
-                match_date: lm.matchDate,
-                start_time: formattedTime,
-                confirmation_deadline: formattedDeadline,
-                max_players: lm.maxPlayers || 24,
-                cost_diarista: lm.costDiarista || 25,
-                status: lm.status || 'scheduled',
-              }]),
-              3000,
-              { data: null, error: null }
-            );
-          } catch (e) {
-            console.warn('Erro ao subir partida local para Supabase:', e);
-          }
-        }
-      }
-
-      // 2. Busca partidas do grupo no Supabase
-      let { data, error } = isValidUUID(groupId)
-        ? await withTimeout(
-            supabase.from('matches').select('*').eq('group_id', groupId).order('match_date', { ascending: false }),
-            4000,
-            { data: null, error: null }
-          )
-        : await withTimeout(
-            supabase.from('matches').select('*').order('match_date', { ascending: false }),
-            4000,
-            { data: null, error: null }
-          );
+      // Busca a fotografia atual das partidas do grupo.
+      const { data, error } = await withTimeout(
+        supabase.from('matches').select('*').eq('group_id', groupId)
+          .order('match_date', { ascending: false }),
+        6000,
+        { data: null, error: new Error('Tempo limite ao buscar listas') }
+      );
 
       if (error) {
         console.warn('Aviso ao consultar partidas do Supabase:', error);
+        return local;
       }
 
       const remoteMatches: Match[] = (data || []).map((m: any) => ({
@@ -143,43 +110,19 @@ export const MatchService = {
         createdAt: m.created_at || new Date().toISOString(),
       }));
 
-      // Se nenhum registro existe nem remoto nem local para este grupo, cria partida padrão
-      if (remoteMatches.length === 0 && local.length === 0) {
-        const group = GroupService.getGroupById(groupId);
-        const matchTime = group?.matchTime || '08:00';
-        const defaultMatch: Match = {
-          id: generateUUID(),
-          groupId,
-          matchDate: new Date().toISOString().split('T')[0],
-          startTime: matchTime,
-          maxPlayers: group?.maxSlots || 20,
-          costDiarista: group?.dailyFee || 25,
-          status: 'scheduled',
-          createdAt: new Date().toISOString(),
-        };
-        remoteMatches.push(defaultMatch);
-      }
-
-      // Merge de partidas por ID
-      const map = new Map<string, Match>();
-      remoteMatches.forEach((m) => map.set(m.id, m));
-      local.forEach((m) => {
-        if (!map.has(m.id)) map.set(m.id, m);
-      });
-
-      const merged = Array.from(map.values()).sort(
+      const authoritative = remoteMatches.sort(
         (a, b) => new Date(b.matchDate + 'T' + (b.startTime || '00:00')).getTime() - new Date(a.matchDate + 'T' + (a.startTime || '00:00')).getTime()
       );
 
-      setStored(`matches_${groupId}`, merged);
+      setStored(`matches_${groupId}`, authoritative);
 
-      const hasOpenMatch = merged.some((m) => m.status === 'scheduled');
+      const hasOpenMatch = authoritative.some((m) => m.status === 'scheduled');
       const g = GroupService.getGroupById(groupId);
       if (g && g.isOpenAttendance !== hasOpenMatch) {
         GroupService.updateGroup(groupId, { isOpenAttendance: hasOpenMatch });
       }
 
-      return merged;
+      return authoritative;
     } catch (err) {
       console.warn('Erro ao sincronizar partidas do Supabase:', err);
       return local;
@@ -326,13 +269,16 @@ export const MatchService = {
         }
         if (data.costDiarista !== undefined) updatePayload.cost_diarista = data.costDiarista;
 
-        await withTimeout(
-          supabase.from('matches').update(updatePayload).eq('id', matchId),
+        const result = await withTimeout(
+          supabase.from('matches').update(updatePayload).eq('id', matchId).select('id'),
           4000,
-          { error: null }
+          { error: new Error('Tempo limite ao atualizar a lista') }
         );
+        if (result.error || !result.data?.length) throw result.error || new Error('Lista nao encontrada');
       } catch (err) {
         console.warn('Erro ao atualizar partida no Supabase:', err);
+        await this.syncMatchesFromCloud(groupId);
+        throw new Error('Nao foi possivel editar a lista na nuvem. Tente novamente.');
       }
     }
 
@@ -351,6 +297,19 @@ export const MatchService = {
   },
 
   async deleteMatch(groupId: string, matchId: string): Promise<boolean> {
+    if (isSupabaseConfigured && supabase) {
+      if (!isValidUUID(matchId)) return false;
+      const result = await withTimeout(
+        supabase.from('matches').delete().eq('id', matchId).select('id'),
+        6000,
+        { data: null, error: new Error('Tempo limite ao excluir a lista') }
+      );
+      if (result.error) {
+        console.warn('Erro ao excluir partida no Supabase:', result.error);
+        throw new Error('Nao foi possivel excluir a lista na nuvem. Tente novamente.');
+      }
+    }
+
     const matches = this.getMatches(groupId);
     const filtered = matches.filter((m) => m.id !== matchId);
     setStored(`matches_${groupId}`, filtered);
@@ -364,25 +323,6 @@ export const MatchService = {
     // Fecha a presença se não houver outras partidas agendadas
     const hasRemainingScheduled = filtered.some((m) => m.status === 'scheduled');
     await GroupService.updateGroup(groupId, { isOpenAttendance: hasRemainingScheduled });
-
-    if (isSupabaseConfigured && supabase && isValidUUID(matchId)) {
-      try {
-        // Exclui presenças associadas primeiro
-        await withTimeout(
-          supabase.from('match_attendances').delete().eq('match_id', matchId),
-          4000,
-          { error: null }
-        );
-        // Exclui a partida
-        await withTimeout(
-          supabase.from('matches').delete().eq('id', matchId),
-          4000,
-          { error: null }
-        );
-      } catch (err) {
-        console.warn('Erro ao excluir partida no Supabase:', err);
-      }
-    }
 
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('match_deleted', { detail: { matchId, groupId } }));
@@ -622,7 +562,7 @@ export const MatchService = {
     // Sincroniza presença no Supabase de forma confiável e com timeout
     if (isSupabaseConfigured && supabase && isValidUUID(matchId)) {
       try {
-        await withTimeout(
+        const result = await withTimeout(
           supabase.from('match_attendances').upsert([{
             id: attendanceId,
             match_id: matchId,
@@ -632,10 +572,13 @@ export const MatchService = {
             confirmed_at: newAttendance.confirmedAt,
           }], { onConflict: 'match_id,user_id' }),
           4000,
-          { data: null, error: null }
+          { data: null, error: new Error('Tempo limite ao confirmar presenca') }
         );
+        if (result.error) throw result.error;
       } catch (err) {
         console.warn('Erro ao salvar presença no Supabase:', err);
+        await this.syncAttendancesFromCloud(matchId);
+        throw new Error('Nao foi possivel confirmar sua presenca na nuvem. Tente novamente.');
       }
     }
 
