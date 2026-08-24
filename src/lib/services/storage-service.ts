@@ -1530,23 +1530,40 @@ export const MatchService = {
       }
 
       // 2. Busca todas as partidas do grupo no Supabase
-      let query = supabase
-        .from('matches')
-        .select('*')
-        .order('match_date', { ascending: false });
+      let { data, error } = isValidUUID(groupId)
+        ? await supabase.from('matches').select('*').eq('group_id', groupId).order('match_date', { ascending: false })
+        : await supabase.from('matches').select('*').order('match_date', { ascending: false });
 
-      if (isValidUUID(groupId)) {
-        query = query.eq('group_id', groupId);
+      // Se não encontrou nenhuma partida para este group_id específico, busca partidas globais no Supabase
+      if (!data || data.length === 0) {
+        const { data: allMatches } = await supabase
+          .from('matches')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(10);
+
+        if (allMatches && allMatches.length > 0) {
+          data = allMatches;
+          if (isValidUUID(groupId)) {
+            for (const m of allMatches) {
+              if (m.group_id !== groupId) {
+                try {
+                  await supabase.from('matches').update({ group_id: groupId }).eq('id', m.id);
+                } catch (e) {
+                  console.warn('Aviso ao associar partida ao grupo ativo:', e);
+                }
+              }
+            }
+          }
+        }
       }
 
-      const { data, error } = await query;
-
-      if (error || !data) {
-        if (error) console.warn('Aviso ao consultar partidas do Supabase:', error);
+      if (error && (!data || data.length === 0)) {
+        console.warn('Aviso ao consultar partidas do Supabase:', error);
         return local;
       }
 
-      const remoteMatches: Match[] = data.map((m: any) => ({
+      const remoteMatches: Match[] = (data || []).map((m: any) => ({
         id: m.id,
         groupId: m.group_id,
         matchDate: m.match_date,
