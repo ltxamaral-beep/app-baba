@@ -26,7 +26,7 @@ import {
   Clock
 } from 'lucide-react';
 import { GroupService, UserService, MatchService, NotificationService } from '@/lib/services/storage-service';
-import { Group, GroupMember, AppNotification } from '@/types';
+import { Group, GroupMember, AppNotification, UserProfile } from '@/types';
 
 export function Navbar() {
   const pathname = usePathname();

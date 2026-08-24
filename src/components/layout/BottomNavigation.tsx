@@ -52,7 +52,9 @@ export function BottomNavigation() {
     };
   }, [pathname]);
 
-  const targetGroupId = activeGroupId || 'group-1';
+  const targetGroupId = (activeGroupId && activeGroupId !== 'group-1') 
+    ? activeGroupId 
+    : (GroupService.getActiveGroupId() || '0cae6a08-5cf3-466e-840a-0f6cf3a8f3ac');
 
   const tabs = [
     {

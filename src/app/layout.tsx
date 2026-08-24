@@ -10,6 +10,8 @@ export const metadata: Metadata = {
   },
 };
 
+import { SessionSync } from '@/components/auth/SessionSync';
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -18,6 +20,7 @@ export default function RootLayout({
   return (
     <html lang="pt-BR">
       <body className="antialiased selection:bg-emerald-500 selection:text-black">
+        <SessionSync />
         {children}
         <ToastContainer />
       </body>

@@ -50,11 +50,15 @@ export default function LoginPage() {
         return;
       }
 
-      router.push('/dashboard');
+      // Redireciona com reload completo para recarregar o contexto com o usuário logado
+      if (typeof window !== 'undefined') {
+        window.location.href = '/dashboard';
+      } else {
+        router.push('/dashboard');
+      }
     } catch (err: any) {
       console.error(err);
-      setError('Erro no servidor ao tentar autenticar.');
-    } finally {
+      setError('Erro ao tentar autenticar. Verifique sua conexão.');
       setLoading(false);
     }
   };

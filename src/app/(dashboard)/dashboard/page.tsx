@@ -19,6 +19,7 @@ import {
   AppNotification 
 } from '@/types';
 import { formatCurrency } from '@/lib/utils/masks';
+import { supabase, isSupabaseConfigured } from '@/lib/supabase/client';
 import { 
   matchTransactionPeriod, 
   MONTH_NAMES, 
@@ -163,6 +164,11 @@ export default function DashboardPage() {
           const cloudAtts = await MatchService.syncAttendancesFromCloud(openMatch.id);
           setAttendances(cloudAtts);
         }
+
+        const cloudTrans = await FinanceService.syncTransactionsFromCloud(targetG.id);
+        if (cloudTrans && cloudTrans.length > 0) {
+          setTransactions(cloudTrans);
+        }
       }
     } catch (e) {
       console.warn('Erro ao sincronizar dashboard com nuvem:', e);
@@ -183,11 +189,30 @@ export default function DashboardPage() {
     window.addEventListener('user_profile_updated', handleGroupChanged);
     window.addEventListener('storage', handleGroupChanged);
 
+    let channel: any = null;
+    if (isSupabaseConfigured && supabase) {
+      channel = supabase
+        .channel('dashboard_realtime_stream')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'match_attendances' }, () => {
+          loadDashboardData();
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, () => {
+          loadDashboardData();
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'financial_transactions' }, () => {
+          loadDashboardData();
+        })
+        .subscribe();
+    }
+
     return () => {
       clearInterval(interval);
       window.removeEventListener('active_group_changed', handleGroupChanged);
       window.removeEventListener('user_profile_updated', handleGroupChanged);
       window.removeEventListener('storage', handleGroupChanged);
+      if (channel && supabase) {
+        supabase.removeChannel(channel);
+      }
     };
   }, []);
 
@@ -302,7 +327,7 @@ export default function DashboardPage() {
   const confirmedCount = attendances.filter((a) => a.status === 'confirmed' || a.status === 'present').length;
   const guestCount = attendances.filter((a) => a.isGuest && (a.status === 'confirmed' || a.status === 'present')).length;
   const maxSlots = nextMatch?.maxPlayers || activeGroup?.maxSlots || 24;
-  const isAttendanceOpen = !!(activeGroup?.isOpenAttendance && nextMatch);
+  const isAttendanceOpen = !!((nextMatch && nextMatch.status === 'scheduled') || activeGroup?.isOpenAttendance);
 
   // Cálculos Financeiros do Período Selecionado
   const periodIncome = periodFilteredTransactions
@@ -322,8 +347,13 @@ export default function DashboardPage() {
 
   // Membros Inadimplentes / Débitos Pendentes
   const overdueTransactions = periodFilteredTransactions.filter((t) => t.type === 'income' && (t.status === 'pending' || t.status === 'overdue'));
-  const allOverdueTransactions = (transactions || []).filter((t) => t.type === 'income' && (t.status === 'pending' || t.status === 'overdue'));
-  const userPendingTransaction = (transactions || []).find((t) => t.userId === user?.id && t.status !== 'paid');
+  const userPendingTransaction = (transactions || []).find((t) => 
+    t.status !== 'paid' && (
+      (t.userId && (t.userId === user?.id || t.userId === currentMember?.userId)) ||
+      (user?.name && t.userName && t.userName.trim().toLowerCase() === user.name.trim().toLowerCase()) ||
+      (user?.name && user.name.trim().length > 3 && t.description && t.description.toLowerCase().includes(user.name.trim().toLowerCase()))
+    )
+  );
 
   const isPresident = currentMember?.role === 'presidente' || activeGroup?.createdBy === user?.id;
 
@@ -552,6 +582,55 @@ export default function DashboardPage() {
               </a>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ALERTA DE COBRANÇA DIRETA PARA O MEMBRO */}
+      {userPendingTransaction && (
+        <div className="bg-gradient-to-r from-rose-950/70 via-slate-900 to-rose-950/70 border border-rose-500/50 rounded-3xl p-5 sm:p-6 shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-in fade-in">
+          <div className="flex items-start sm:items-center gap-3.5">
+            <div className="w-12 h-12 rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center font-bold flex-shrink-0 text-xl">
+              💳
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-rose-500 text-slate-950">
+                  Cobrança Pendente
+                </span>
+                <span className="text-xs text-slate-400">
+                  Vencimento: {userPendingTransaction.dueDate ? new Date(userPendingTransaction.dueDate).toLocaleDateString('pt-BR') : 'A vencer'}
+                </span>
+              </div>
+              <h3 className="text-base sm:text-lg font-black text-white mt-1">
+                {userPendingTransaction.description || 'Mensalidade do Baba'}
+              </h3>
+              <p className="text-xs text-rose-300 mt-0.5">
+                Valor a pagar: <strong className="text-white text-sm">{formatCurrency(userPendingTransaction.amount)}</strong>
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            {activeGroup?.pixKey && (
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard.writeText(activeGroup.pixKey || '');
+                  alert(`Chave PIX copiada: ${activeGroup.pixKey}`);
+                }}
+                className="flex-1 sm:flex-none bg-[#00b49f] hover:bg-[#00cba9] text-slate-950 font-black px-4 py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all shadow-md active:scale-95"
+              >
+                Copiar PIX ({activeGroup.pixKeyType?.toUpperCase() || 'PIX'})
+              </button>
+            )}
+
+            <Link
+              href={`/grupos/${activeGroup?.id}/financas`}
+              className="flex-1 sm:flex-none bg-slate-800 hover:bg-slate-700 text-white font-bold px-4 py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-colors border border-slate-700"
+            >
+              Ver Detalhes <ArrowRight className="w-3.5 h-3.5" />
+            </Link>
+          </div>
         </div>
       )}
 
@@ -1115,7 +1194,7 @@ export default function DashboardPage() {
               </button>
             </div>
 
-            <form onSubmit={handleOpenAttendanceSubmit} className="space-y-4">
+            <form onSubmit={handleOpenAttendance} className="space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">Data da Pelada</label>
                 <input

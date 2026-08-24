@@ -3,8 +3,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   FinanceService, 
-  GroupService 
+  GroupService,
+  UserService
 } from '@/lib/services/storage-service';
+import { supabase, isSupabaseConfigured } from '@/lib/supabase/client';
 import { formatCurrency } from '@/lib/utils/masks';
 import { 
   FinancialTransaction, 
@@ -70,7 +72,10 @@ const CATEGORY_LABELS: Record<TransactionCategory, { label: string; icon: string
 };
 
 export default function FinancesPage({ params }: { params: { groupId: string } }) {
-  const groupId = params.groupId || 'group-1';
+  const rawGroupId = params?.groupId;
+  const groupId = (rawGroupId && rawGroupId !== 'group-1') 
+    ? rawGroupId 
+    : (GroupService.getActiveGroupId() || '0cae6a08-5cf3-466e-840a-0f6cf3a8f3ac');
   const [transactions, setTransactions] = useState<FinancialTransaction[]>([]);
   const [members, setMembers] = useState<GroupMember[]>([]);
   const [activeFilter, setActiveFilter] = useState<'all' | 'inadimplentes' | 'cartoes' | 'mensalidades' | 'diarias' | 'saldo_inicial' | 'expenses'>('all');
@@ -166,8 +171,24 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
 
   useEffect(() => {
     loadData();
-    const interval = setInterval(loadData, 5000);
-    return () => clearInterval(interval);
+    const interval = setInterval(loadData, 4000);
+
+    let channel: any = null;
+    if (isSupabaseConfigured && supabase) {
+      channel = supabase
+        .channel(`financas_realtime_${groupId}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'financial_transactions' }, () => {
+          loadData();
+        })
+        .subscribe();
+    }
+
+    return () => {
+      clearInterval(interval);
+      if (channel && supabase) {
+        supabase.removeChannel(channel);
+      }
+    };
   }, [groupId]);
 
   const isDirector = currentMember?.role === 'presidente' || currentMember?.role === 'adm' || currentMember?.role === 'tesoureiro';
@@ -179,6 +200,20 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
   const periodFilteredTransactions = useMemo(() => {
     return transactions.filter((t) => matchTransactionPeriod(t, periodType, selectedYear, selectedMonth));
   }, [transactions, periodType, selectedYear, selectedMonth]);
+
+  const currentUser = UserService.getCurrentUser();
+  const myTransactions = useMemo(() => {
+    if (!currentUser) return [];
+    return transactions.filter((t) => 
+      (t.userId && (t.userId === currentUser.id || t.userId === currentMember?.userId)) ||
+      (currentUser.name && t.userName && t.userName.trim().toLowerCase() === currentUser.name.trim().toLowerCase()) ||
+      (currentUser.name && currentUser.name.trim().length > 3 && t.description && t.description.toLowerCase().includes(currentUser.name.trim().toLowerCase()))
+    );
+  }, [transactions, currentUser, currentMember]);
+
+  const myPendingTransactions = useMemo(() => {
+    return myTransactions.filter((t) => t.status !== 'paid');
+  }, [myTransactions]);
 
   // Cálculos Financeiros do Período Selecionado
   const periodIncome = periodFilteredTransactions
@@ -208,9 +243,9 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
 
   const delinquentMembers = members.filter((m) => m.isBlockedFinancial);
 
-  const handleSettle = (transactionId: string) => {
-    FinanceService.settleTransaction(groupId, transactionId);
-    loadData();
+  const handleSettle = async (transactionId: string) => {
+    await FinanceService.settleTransaction(groupId, transactionId);
+    await loadData();
     const msg = 'Pagamento registrado com sucesso! Débito quitado e atleta liberado. ✅';
     setNotification(msg);
     showToast(msg, 'success');
@@ -233,7 +268,7 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
   };
 
   // Salvar Edição
-  const handleSaveEdit = (e: React.FormEvent) => {
+  const handleSaveEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     let targetUserName: string | undefined;
     if (editForm.userId) {
@@ -241,7 +276,7 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
       if (u) targetUserName = u.user.name;
     }
 
-    const updated = FinanceService.updateTransaction(groupId, editForm.id, {
+    const updated = await FinanceService.updateTransaction(groupId, editForm.id, {
       description: editForm.description,
       category: editForm.category,
       type: editForm.type,
@@ -253,7 +288,7 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
     });
 
     if (updated) {
-      loadData();
+      await loadData();
       setEditModalOpen(false);
       const msg = 'Lançamento financeiro atualizado com sucesso! ✅';
       setNotification(msg);
@@ -263,34 +298,36 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
   };
 
   // Excluir Lançamento
-  const handleDelete = (t: FinancialTransaction) => {
+  const handleDelete = async (t: FinancialTransaction) => {
     const confirmDelete = window.confirm(
       `Deseja realmente excluir o lançamento "${t.description}" no valor de ${formatCurrency(t.amount)}?`
     );
     if (!confirmDelete) return;
 
-    const ok = FinanceService.deleteTransaction(groupId, t.id);
+    const ok = await FinanceService.deleteTransaction(groupId, t.id);
     if (ok) {
-      loadData();
+      await loadData();
       const msg = 'Lançamento excluído do extrato financeiro. 🗑️';
       setNotification(msg);
       showToast(msg, 'info');
       setTimeout(() => setNotification(null), 4000);
+    } else {
+      showToast('Não foi possível confirmar a exclusão no servidor. O lançamento foi mantido.', 'error');
     }
   };
 
   // 1. Submit Mensalidades (Lote ou Individual / Retroativa)
-  const handleSubmitMonthly = (e: React.FormEvent) => {
+  const handleSubmitMonthly = async (e: React.FormEvent) => {
     e.preventDefault();
     if (monthlyMode === 'batch') {
-      const result = FinanceService.generateMonthlyDuesBatch(
+      const result = await FinanceService.generateMonthlyDuesBatch(
         groupId,
         monthRef,
         monthlyAmount,
         monthlyDueDate,
         monthlyIsPaid
       );
-      loadData();
+      await loadData();
       setModalOpen(false);
       const msg = `⚡ Mensalidade de ${monthRef} registrada para ${result.generatedCount} associados (${monthlyIsPaid ? 'PAGO NO CAIXA' : 'COBRANÇA PENDENTE'})!`;
       setNotification(msg);
@@ -301,7 +338,7 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
         alert('Selecione um atleta.');
         return;
       }
-      FinanceService.generateSingleMonthlyDue(
+      await FinanceService.generateSingleMonthlyDue(
         groupId,
         targetM.userId,
         targetM.user.name,
@@ -310,7 +347,7 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
         monthlyDueDate,
         monthlyIsPaid
       );
-      loadData();
+      await loadData();
       setModalOpen(false);
       const msg = `Mensalidade de ${monthRef} (${formatCurrency(monthlyAmount)}) lançada para ${targetM.user.name} (${monthlyIsPaid ? 'PAGO' : 'PENDENTE'}).`;
       setNotification(msg);
@@ -320,7 +357,7 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
   };
 
   // 2. Submit Lançamento Universal / Personalizado (Receita ou Despesa Livre)
-  const handleSubmitCustom = (e: React.FormEvent) => {
+  const handleSubmitCustom = async (e: React.FormEvent) => {
     e.preventDefault();
     let targetUserName: string | undefined;
     let targetUserId: string | undefined;
@@ -334,28 +371,28 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
     }
 
     if (customType === 'income') {
-      FinanceService.generateCustomIncome(
-        groupId,
-        customCategory,
-        customDesc,
-        customAmount,
-        customDate,
-        targetUserId,
-        targetUserName,
-        customIsPaid
-      );
+      await FinanceService.createTransaction(groupId, {
+        category: customCategory,
+        description: customDesc,
+        amount: customAmount,
+        dueDate: customDate,
+        userId: targetUserId,
+        userName: targetUserName,
+        status: customIsPaid ? 'paid' : 'pending',
+        paidAt: customIsPaid ? new Date().toISOString() : undefined,
+        type: 'income',
+        recordedBy: currentUser.id,
+      });
       const msg = `🟢 Receita de ${formatCurrency(customAmount)} (${CATEGORY_LABELS[customCategory]?.label}) registrada com sucesso.`;
       setNotification(msg);
       showToast(msg, 'success');
     } else {
-      FinanceService.createExpense(
+      await FinanceService.createCost(
         groupId,
         customCategory,
         targetUserName ? `${customDesc} (${targetUserName})` : customDesc,
         customAmount,
         customDate,
-        targetUserId,
-        targetUserName,
         customIsPaid
       );
       const msg = `🔴 Despesa de ${formatCurrency(customAmount)} (${CATEGORY_LABELS[customCategory]?.label}) registrada no caixa.`;
@@ -363,7 +400,7 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
       showToast(msg, 'success');
     }
 
-    loadData();
+    await loadData();
     setModalOpen(false);
     setTimeout(() => setNotification(null), 4000);
   };
@@ -518,6 +555,74 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
             </select>
           )}
         </div>
+      </div>
+
+      {/* MEU EXTRATO PESSOAL / SITUAÇÃO DO MEMBRO */}
+      <div className="bg-[#121e2b] border border-[#1e3247] rounded-3xl p-5 sm:p-6 shadow-xl space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#182737] pb-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-indigo-500/15 border border-indigo-500/30 text-indigo-400 flex items-center justify-center font-bold flex-shrink-0">
+              👤
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-white">Minha Situação Individual</span>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-bold capitalize">
+                  {currentMember?.role || 'Associado'}
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Atleta: <strong className="text-white">{currentUser?.name}</strong>
+              </p>
+            </div>
+          </div>
+
+          <div>
+            {myPendingTransactions.length > 0 ? (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-300 text-xs font-bold">
+                <AlertTriangle className="w-4 h-4 text-rose-400" /> {myPendingTransactions.length} Débito(s) Pendente(s) ({formatCurrency(myPendingTransactions.reduce((a, b) => a + b.amount, 0))})
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-bold">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400" /> Pagamentos 100% em Dia
+              </span>
+            )}
+          </div>
+        </div>
+
+        {myTransactions.length === 0 ? (
+          <p className="text-xs text-slate-500 py-2 text-center italic">
+            Nenhum lançamento nominal registrado para você ainda.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {myTransactions.slice(0, 4).map((t) => (
+              <div
+                key={t.id}
+                className="p-3 rounded-2xl bg-[#0d1721] border border-[#182737] flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs"
+              >
+                <div>
+                  <p className="font-bold text-white">{t.description}</p>
+                  <p className="text-[11px] text-slate-400">
+                    Vencimento: {t.dueDate ? new Date(t.dueDate).toLocaleDateString('pt-BR') : 'Não informado'} • Categoria: {t.category}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="font-black text-sm text-white">
+                    {formatCurrency(t.amount)}
+                  </span>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                    t.status === 'paid'
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                      : 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                  }`}>
+                    {t.status === 'paid' ? 'Pago' : 'Pendente'}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* KPI Cards do Período */}
@@ -751,8 +856,43 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
           </table>
 
           {periodFilteredTransactions.length === 0 && (
-            <div className="text-center py-8 text-slate-500 text-xs italic">
-              Nenhuma movimentação financeira encontrada para o período <strong>{currentPeriodLabel}</strong>.
+            <div className="text-center py-10 px-4 space-y-3 bg-slate-950/40 rounded-xl border border-dashed border-slate-800 my-2">
+              <p className="text-slate-400 text-xs font-medium">
+                Nenhum lançamento financeiro encontrado para o período <strong className="text-white">{currentPeriodLabel}</strong>.
+              </p>
+              <div className="flex items-center justify-center gap-2 flex-wrap pt-1">
+                {periodType !== 'all' && (
+                  <button
+                    onClick={() => setPeriodType('all')}
+                    className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-white transition-all border border-slate-700"
+                  >
+                    🔍 Ver Histórico Geral (Todos os Meses)
+                  </button>
+                )}
+                {isDirector && (
+                  <>
+                    <button
+                      onClick={() => {
+                        setMonthlyMode('batch');
+                        setModalOpen(true);
+                      }}
+                      className="px-3 py-1.5 rounded-xl bg-[#00b49f] hover:bg-[#009b89] text-slate-950 text-xs font-bold transition-all shadow-sm"
+                    >
+                      ⭐ Gerar Mensalidades de {MONTH_NAMES[selectedMonth - 1] || 'Agosto'}/{selectedYear}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setCustomType('expense');
+                        setActiveTab('lancamento_geral');
+                        setModalOpen(true);
+                      }}
+                      className="px-3 py-1.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 text-xs font-semibold border border-rose-500/30 transition-all"
+                    >
+                      📉 Lançar Despesa
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
           )}
         </div>

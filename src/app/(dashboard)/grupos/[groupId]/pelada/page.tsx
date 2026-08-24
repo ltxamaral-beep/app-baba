@@ -22,6 +22,7 @@ import {
 } from '@/types';
 import { balanceTeams } from '@/lib/utils/draw-algorithm';
 import { showToast } from '@/components/ui/Toast';
+import { supabase, isSupabaseConfigured } from '@/lib/supabase/client';
 import { 
   Calendar, 
   Clock, 
@@ -54,11 +55,15 @@ import {
   Ticket,
   Share2,
   Copy,
-  MessageCircle
+  MessageCircle,
+  Edit3
 } from 'lucide-react';
 
 export default function PeladaHubPage({ params }: { params: { groupId: string } }) {
-  const groupId = params.groupId || 'group-1';
+  const rawGroupId = params?.groupId;
+  const groupId = (rawGroupId && rawGroupId !== 'group-1') 
+    ? rawGroupId 
+    : (GroupService.getActiveGroupId() || '0cae6a08-5cf3-466e-840a-0f6cf3a8f3ac');
   const [group, setGroup] = useState<Group | null>(null);
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [currentMember, setCurrentMember] = useState<GroupMember | null>(null);
@@ -81,6 +86,18 @@ export default function PeladaHubPage({ params }: { params: { groupId: string } 
     deadlineDate: new Date().toISOString().split('T')[0],
     deadlineTime: '12:00',
     hasDeadline: true,
+  });
+
+  // Modal de Edição da Lista / Partida (Comissão)
+  const [editMatchModalOpen, setEditMatchModalOpen] = useState(false);
+  const [editMatchData, setEditMatchData] = useState({
+    matchDate: '',
+    startTime: '',
+    maxPlayers: 20,
+    costDiarista: 25,
+    deadlineDate: '',
+    deadlineTime: '12:00',
+    hasDeadline: false,
   });
 
   // Estatísticas / Súmula da Partida
@@ -111,20 +128,7 @@ export default function PeladaHubPage({ params }: { params: { groupId: string } 
       const member = GroupService.getMemberInGroup(g.id, user.id);
       setCurrentMember(member || null);
 
-      // 2. Busca partidas locais
-      const mList = MatchService.getMatches(g.id);
-      setMatches(mList);
-
-      const localOpen = mList.find((m) => m.status === 'scheduled');
-      if (localOpen) {
-        setActiveMatch(localOpen);
-        setAttendances(MatchService.getAttendances(localOpen.id));
-      } else if (mList.length > 0) {
-        setActiveMatch(mList[0]);
-        setAttendances(MatchService.getAttendances(mList[0].id));
-      }
-
-      // 3. Sincroniza partidas e presenças com o Supabase em segundo plano
+      // 2. Sincroniza partidas e presenças com o Supabase prioritariamente
       try {
         const cloudMatches = await MatchService.syncMatchesFromCloud(g.id);
         if (cloudMatches && cloudMatches.length > 0) {
@@ -136,17 +140,47 @@ export default function PeladaHubPage({ params }: { params: { groupId: string } 
 
           const cloudAtts = await MatchService.syncAttendancesFromCloud(openMatch.id);
           setAttendances(cloudAtts);
+          return;
         }
       } catch (err) {
         console.warn('Erro ao sincronizar partidas e presenças com Supabase:', err);
+      }
+
+      // 3. Fallback para dados locais caso esteja offline
+      const mList = MatchService.getMatches(g.id);
+      setMatches(mList);
+      const localOpen = mList.find((m) => m.status === 'scheduled') || mList[0];
+      if (localOpen) {
+        setActiveMatch(localOpen);
+        setAttendances(MatchService.getAttendances(localOpen.id));
       }
     }
   };
 
   useEffect(() => {
     loadData();
-    const interval = setInterval(loadData, 5000);
-    return () => clearInterval(interval);
+    const interval = setInterval(loadData, 4000);
+
+    // Supabase Realtime para atualização instantânea multi-usuário
+    let channel: any = null;
+    if (isSupabaseConfigured && supabase) {
+      channel = supabase
+        .channel(`pelada_realtime_${groupId}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'match_attendances' }, () => {
+          loadData();
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, () => {
+          loadData();
+        })
+        .subscribe();
+    }
+
+    return () => {
+      clearInterval(interval);
+      if (channel && supabase) {
+        supabase.removeChannel(channel);
+      }
+    };
   }, [groupId]);
 
   const [editSlotsModalOpen, setEditSlotsModalOpen] = useState(false);
@@ -169,8 +203,13 @@ export default function PeladaHubPage({ params }: { params: { groupId: string } 
   const confirmedList = attendances.filter((a) => a.status === 'confirmed' || a.status === 'present');
   const waitlistList = attendances.filter((a) => a.status === 'waitlist');
   const guestList = attendances.filter((a) => a.isGuest && a.status !== 'cancelled');
-  const userAttendance = attendances.find((a) => a.userId === currentUser?.id);
   const maxSlots = activeMatch?.maxPlayers || group.maxSlots || 24;
+  const userAttendance = attendances.find((a) => 
+    (currentUser?.id && a.userId === currentUser.id) ||
+    (currentUser?.cpf && a.user?.cpf && a.user.cpf.replace(/\D/g, '') === currentUser.cpf.replace(/\D/g, '')) ||
+    (currentUser?.email && a.user?.email && a.user.email.toLowerCase() === currentUser.email.toLowerCase()) ||
+    (currentUser?.name && a.user?.name && a.user.name.trim().toLowerCase() === currentUser.name.trim().toLowerCase())
+  );
 
   const isDeadlinePassed = activeMatch?.confirmationDeadline
     ? new Date() > new Date(activeMatch.confirmationDeadline)
@@ -226,6 +265,82 @@ export default function PeladaHubPage({ params }: { params: { groupId: string } 
     MatchService.demoteConfirmedToWaitlist(activeMatch.id, attendanceId);
     showToast(`${athleteName} foi movido para a fila de espera.`, 'info');
     loadData();
+  };
+
+  const handleOpenEditMatch = () => {
+    if (!activeMatch) return;
+    let deadlineD = '';
+    let deadlineT = '12:00';
+    let hasDl = false;
+    if (activeMatch.confirmationDeadline) {
+      hasDl = true;
+      try {
+        const d = new Date(activeMatch.confirmationDeadline);
+        deadlineD = d.toISOString().split('T')[0];
+        deadlineT = d.toTimeString().substring(0, 5);
+      } catch {}
+    }
+    setEditMatchData({
+      matchDate: activeMatch.matchDate,
+      startTime: activeMatch.startTime || '08:00',
+      maxPlayers: activeMatch.maxPlayers || 20,
+      costDiarista: activeMatch.costDiarista || 25,
+      deadlineDate: deadlineD,
+      deadlineTime: deadlineT,
+      hasDeadline: hasDl,
+    });
+    setEditMatchModalOpen(true);
+  };
+
+  const handleSaveEditMatch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeMatch || !group) return;
+
+    let confirmationDeadline: string | null = null;
+    if (editMatchData.hasDeadline && editMatchData.deadlineDate) {
+      confirmationDeadline = `${editMatchData.deadlineDate}T${editMatchData.deadlineTime || '12:00'}:00`;
+    }
+
+    const updated = await MatchService.updateMatch(group.id, activeMatch.id, {
+      matchDate: editMatchData.matchDate,
+      startTime: editMatchData.startTime,
+      maxPlayers: Number(editMatchData.maxPlayers) || 20,
+      costDiarista: Number(editMatchData.costDiarista) || 25,
+      confirmationDeadline,
+    });
+
+    if (updated) {
+      setActiveMatch(updated);
+      setEditMatchModalOpen(false);
+      showToast('Informações da lista de presença atualizadas com sucesso! ✅', 'success');
+      await loadData();
+    }
+  };
+
+  const handleDeleteMatch = async () => {
+    if (!activeMatch || !group) return;
+    const confirmDelete = window.confirm(
+      `⚠️ ATENÇÃO: Deseja realmente excluir a lista da pelada de ${activeMatch.matchDate} às ${activeMatch.startTime}?\n\nTodas as presenças confirmadas serão canceladas e a lista voltará para fechada.`
+    );
+    if (!confirmDelete) return;
+
+    await MatchService.deleteMatch(group.id, activeMatch.id);
+    setActiveMatch(null);
+    setAttendances([]);
+    showToast('Lista de presença excluída com sucesso. 🗑️', 'info');
+    await loadData();
+  };
+
+  const handleRemoveAthlete = async (attendanceId: string, athleteName: string) => {
+    if (!activeMatch) return;
+    const confirmRemove = window.confirm(`Deseja remover o atleta ${athleteName} da lista de presença?`);
+    if (!confirmRemove) return;
+
+    const res = await MatchService.removeAthleteAttendance(activeMatch.id, attendanceId);
+    if (res.success) {
+      showToast(`Atleta ${athleteName} removido da lista.`, 'info');
+      await loadData();
+    }
   };
 
   const handleUpdateSlotsDirect = async (e: React.FormEvent) => {
@@ -300,18 +415,18 @@ export default function PeladaHubPage({ params }: { params: { groupId: string } 
     }
   };
 
-  const handleConfirmPresence = () => {
+  const handleConfirmPresence = async () => {
     if (!activeMatch || !currentUser) return;
-    MatchService.confirmAttendance(activeMatch.id, currentUser, maxSlots);
+    await MatchService.confirmAttendance(activeMatch.id, currentUser, maxSlots, group?.id);
     showToast('Sua presença foi confirmada na pelada! ⚽', 'success');
-    loadData();
+    await loadData();
   };
 
-  const handleCancelPresence = () => {
+  const handleCancelPresence = async () => {
     if (!activeMatch || !currentUser) return;
-    MatchService.cancelAttendance(activeMatch.id, currentUser.id);
+    await MatchService.cancelAttendance(activeMatch.id, currentUser.id);
     showToast('Sua presença foi cancelada na pelada.', 'info');
-    loadData();
+    await loadData();
   };
 
   const handleDrawTeams = () => {
@@ -448,7 +563,7 @@ export default function PeladaHubPage({ params }: { params: { groupId: string } 
 
           {/* Ações da Comissão / Atleta */}
           <div className="flex items-center gap-2 flex-wrap">
-            {/* Botão da Comissão: Abrir ou Encerrar Lista */}
+            {/* Botões da Comissão: Abrir, Editar, Excluir ou Encerrar Lista */}
             {isDirector && (
               <>
                 {!isAttendanceOpen ? (
@@ -460,26 +575,35 @@ export default function PeladaHubPage({ params }: { params: { groupId: string } 
                     <Zap className="w-4 h-4 fill-slate-950" /> Abrir Lista de Presença
                   </button>
                 ) : (
-                  <button
-                    type="button"
-                    onClick={handleCloseAttendance}
-                    className="inline-flex items-center gap-2 bg-slate-950 hover:bg-slate-800 border border-amber-500/40 text-amber-300 font-bold px-3.5 py-2.5 rounded-xl text-xs transition-colors"
-                  >
-                    <Lock className="w-4 h-4" /> Encerrar Lista
-                  </button>
-                )}
+                  <>
+                    <button
+                      type="button"
+                      onClick={handleOpenEditMatch}
+                      className="inline-flex items-center gap-1.5 bg-[#121e2b] hover:bg-[#182737] border border-[#00b49f]/40 text-[#00b49f] font-bold px-3.5 py-2.5 rounded-xl text-xs transition-colors shadow-sm"
+                      title="Editar data, horário, vagas e regras da lista"
+                    >
+                      <Edit3 className="w-3.5 h-3.5" /> Editar Lista
+                    </button>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    setNewSlotsValue(maxSlots);
-                    setEditSlotsModalOpen(true);
-                  }}
-                  className="inline-flex items-center gap-1.5 bg-[#121e2b] hover:bg-[#182737] border border-[#1e3247] text-slate-200 font-bold px-3 py-2.5 rounded-xl text-xs transition-colors"
-                  title="Alterar limite de vagas da pelada"
-                >
-                  <Settings className="w-3.5 h-3.5 text-[#00b49f]" /> {maxSlots} Vagas
-                </button>
+                    <button
+                      type="button"
+                      onClick={handleDeleteMatch}
+                      className="inline-flex items-center gap-1.5 bg-rose-950/40 hover:bg-rose-900/60 border border-rose-700/50 text-rose-300 font-bold px-3.5 py-2.5 rounded-xl text-xs transition-colors shadow-sm"
+                      title="Excluir lista da pelada e cancelar presenças"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-rose-400" /> Excluir Lista
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleCloseAttendance}
+                      className="inline-flex items-center gap-2 bg-slate-950 hover:bg-slate-800 border border-amber-500/40 text-amber-300 font-bold px-3 py-2.5 rounded-xl text-xs transition-colors"
+                      title="Encerrar lista e avançar para o sorteio de times"
+                    >
+                      <Lock className="w-3.5 h-3.5" /> Encerrar
+                    </button>
+                  </>
+                )}
               </>
             )}
 
@@ -710,16 +834,26 @@ export default function PeladaHubPage({ params }: { params: { groupId: string } 
 
                       <div className="flex items-center gap-2">
                         {isDirector && (
-                          <button
-                            type="button"
-                            onClick={() => handleDemoteToWaitlist(att.id, att.user.name)}
-                            className="p-1 text-slate-500 hover:text-amber-400 transition-colors"
-                            title="Mover para a fila de espera"
-                          >
-                            <Clock className="w-3.5 h-3.5" />
-                          </button>
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => handleDemoteToWaitlist(att.id, att.user.name)}
+                              className="p-1 text-slate-500 hover:text-amber-400 transition-colors"
+                              title="Mover para a fila de espera"
+                            >
+                              <Clock className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveAthlete(att.id, att.user.name)}
+                              className="p-1 text-slate-500 hover:text-rose-400 transition-colors"
+                              title="Remover atleta da lista"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </>
                         )}
-                        {att.isGuest && (att.invitedByUserId === currentUser?.id || isDirector) && (
+                        {att.isGuest && (att.invitedByUserId === currentUser?.id || isDirector) && !isDirector && (
                           <button
                             type="button"
                             onClick={() => handleRemoveGuest(att.id, att.user.name)}
@@ -773,16 +907,26 @@ export default function PeladaHubPage({ params }: { params: { groupId: string } 
                       </div>
                       <div className="flex items-center gap-1.5">
                         {isDirector && (
-                          <button
-                            type="button"
-                            onClick={() => handlePromoteToConfirmed(att.id, att.user.name)}
-                            className="inline-flex items-center gap-1 bg-[#00b49f]/15 hover:bg-[#00b49f]/30 border border-[#00b49f]/40 text-[#00b49f] font-bold px-2 py-1 rounded-lg text-[10px] transition-all active:scale-95 shadow-sm"
-                            title="Promover para a lista de confirmados"
-                          >
-                            <Check className="w-3 h-3" /> Confirmar
-                          </button>
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => handlePromoteToConfirmed(att.id, att.user.name)}
+                              className="inline-flex items-center gap-1 bg-[#00b49f]/15 hover:bg-[#00b49f]/30 border border-[#00b49f]/40 text-[#00b49f] font-bold px-2 py-1 rounded-lg text-[10px] transition-all active:scale-95 shadow-sm"
+                              title="Promover para a lista de confirmados"
+                            >
+                              <Check className="w-3 h-3" /> Confirmar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveAthlete(att.id, att.user.name)}
+                              className="p-1 text-slate-500 hover:text-rose-400"
+                              title="Remover da lista de espera"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </>
                         )}
-                        {att.isGuest && (att.invitedByUserId === currentUser?.id || isDirector) && (
+                        {att.isGuest && (att.invitedByUserId === currentUser?.id || isDirector) && !isDirector && (
                           <button
                             type="button"
                             onClick={() => handleRemoveGuest(att.id, att.user.name)}
@@ -1676,6 +1820,149 @@ export default function PeladaHubPage({ params }: { params: { groupId: string } 
                   className="bg-[#00b49f] hover:bg-[#00cba9] text-slate-950 font-bold px-4 py-2 rounded-xl text-xs shadow-md shadow-[#00b49f]/20 transition-all active:scale-95 flex items-center gap-1.5"
                 >
                   <UserPlus className="w-3.5 h-3.5" /> Adicionar na Lista
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      {/* MODAL: EDITAR LISTA / PARTIDA (COMISSÃO) */}
+      {editMatchModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
+          <div className="w-full max-w-md bg-[#121e2b] border border-[#1e3247] rounded-3xl p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-[#182737] pb-3">
+              <div>
+                <h3 className="text-base font-bold text-white flex items-center gap-2">
+                  <Edit3 className="w-4 h-4 text-[#00b49f]" /> Editar Lista da Pelada
+                </h3>
+                <p className="text-[11px] text-slate-400">
+                  Altere a data, horário, limite de vagas e prazos desta lista.
+                </p>
+              </div>
+              <button onClick={() => setEditMatchModalOpen(false)} className="text-slate-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditMatch} className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">
+                    Data da Pelada *
+                  </label>
+                  <input
+                    type="date"
+                    value={editMatchData.matchDate}
+                    onChange={(e) => setEditMatchData({ ...editMatchData, matchDate: e.target.value })}
+                    required
+                    className="w-full bg-[#0d1721] border border-[#182737] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-[#00b49f]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">
+                    Horário de Início *
+                  </label>
+                  <input
+                    type="time"
+                    value={editMatchData.startTime}
+                    onChange={(e) => setEditMatchData({ ...editMatchData, startTime: e.target.value })}
+                    required
+                    className="w-full bg-[#0d1721] border border-[#182737] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-[#00b49f] font-mono"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">
+                    Limite de Vagas *
+                  </label>
+                  <input
+                    type="number"
+                    min="6"
+                    max="60"
+                    value={editMatchData.maxPlayers}
+                    onChange={(e) => setEditMatchData({ ...editMatchData, maxPlayers: parseInt(e.target.value, 10) || 20 })}
+                    required
+                    className="w-full bg-[#0d1721] border border-[#182737] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-[#00b49f]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">
+                    Valor Diária (R$)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={editMatchData.costDiarista}
+                    onChange={(e) => setEditMatchData({ ...editMatchData, costDiarista: parseFloat(e.target.value) || 25 })}
+                    className="w-full bg-[#0d1721] border border-[#182737] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-[#00b49f]"
+                  />
+                </div>
+              </div>
+
+              {/* Prazo Limite de Confirmação Antecipada */}
+              <div className="bg-[#0d1721]/90 border border-amber-500/30 rounded-2xl p-3.5 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-amber-400 uppercase flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5 text-amber-400" /> Prazo Limite de Confirmação
+                  </label>
+                  <label className="flex items-center gap-1.5 text-[11px] text-slate-300 cursor-pointer font-semibold">
+                    <input
+                      type="checkbox"
+                      checked={editMatchData.hasDeadline}
+                      onChange={(e) => setEditMatchData({ ...editMatchData, hasDeadline: e.target.checked })}
+                      className="rounded accent-amber-500"
+                    />
+                    Ativar Prazo
+                  </label>
+                </div>
+
+                {editMatchData.hasDeadline && (
+                  <div className="grid grid-cols-2 gap-2.5 pt-1">
+                    <div>
+                      <label className="block text-[10px] text-slate-400 font-semibold mb-1">Data Limite</label>
+                      <input
+                        type="date"
+                        value={editMatchData.deadlineDate}
+                        onChange={(e) => setEditMatchData({ ...editMatchData, deadlineDate: e.target.value })}
+                        required={editMatchData.hasDeadline}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-400 font-semibold"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-slate-400 font-semibold mb-1">Horário Limite</label>
+                      <input
+                        type="time"
+                        value={editMatchData.deadlineTime}
+                        onChange={(e) => setEditMatchData({ ...editMatchData, deadlineTime: e.target.value })}
+                        required={editMatchData.hasDeadline}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-400 font-mono font-semibold"
+                      />
+                    </div>
+                  </div>
+                )}
+                <p className="text-[10px] text-slate-400 leading-tight">
+                  💡 Quem confirmar após este prazo vai para a fila de espera.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#182737]">
+                <button
+                  type="button"
+                  onClick={() => setEditMatchModalOpen(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-white"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="bg-[#00b49f] hover:bg-[#00cba9] text-slate-950 font-bold px-4 py-2 rounded-xl text-xs shadow-md shadow-[#00b49f]/20 transition-all active:scale-95 flex items-center gap-1.5"
+                >
+                  <Save className="w-3.5 h-3.5" /> Salvar Alterações
                 </button>
               </div>
             </form>

@@ -4,6 +4,8 @@ import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { MatchService, GroupService, UserService } from '@/lib/services/storage-service';
+import { supabase, isSupabaseConfigured } from '@/lib/supabase/client';
+import { mockUsers } from '@/lib/mock-data';
 import { Match, MatchAttendance, UserProfile, UserPosition, DominantFoot } from '@/types';
 import { 
   Users, 
@@ -73,7 +75,23 @@ export default function AttendancePage({ params }: { params: { groupId: string; 
   useEffect(() => {
     loadData();
     const interval = setInterval(loadData, 4000);
-    return () => clearInterval(interval);
+
+    let channel: any = null;
+    if (isSupabaseConfigured && supabase) {
+      channel = supabase
+        .channel(`presenca_realtime_${params.matchId}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'match_attendances' }, () => {
+          loadData();
+        })
+        .subscribe();
+    }
+
+    return () => {
+      clearInterval(interval);
+      if (channel && supabase) {
+        supabase.removeChannel(channel);
+      }
+    };
   }, [params.matchId, params.groupId]);
 
   if (!match) return <div className="p-8 text-center text-slate-400">Carregando lista...</div>;
@@ -81,37 +99,44 @@ export default function AttendancePage({ params }: { params: { groupId: string; 
   const confirmedList = attendances.filter((a) => a.status === 'confirmed' || a.status === 'present');
   const waitlist = attendances.filter((a) => a.status === 'waitlist');
   const guestList = attendances.filter((a) => a.isGuest && a.status !== 'cancelled');
-  const isFull = confirmedList.length >= match.maxPlayers;
-
-  const myAttendance = attendances.find((a) => a.userId === activeUser.id);
+  const myAttendance = attendances.find((a) => 
+    (activeUser?.id && a.userId === activeUser.id) ||
+    (activeUser?.cpf && a.user?.cpf && a.user.cpf.replace(/\D/g, '') === activeUser.cpf.replace(/\D/g, '')) ||
+    (activeUser?.email && a.user?.email && a.user.email.toLowerCase() === activeUser.email.toLowerCase()) ||
+    (activeUser?.name && a.user?.name && a.user.name.trim().toLowerCase() === activeUser.name.trim().toLowerCase())
+  );
   const isMyAttendanceConfirmed = myAttendance?.status === 'confirmed' || myAttendance?.status === 'present';
   const isMyAttendanceWaitlist = myAttendance?.status === 'waitlist';
+  const isFull = confirmedList.length >= match.maxPlayers;
 
   // Verifica se o usuário ativo é inadimplente ou está pendente de aprovação da diretoria
-  const members = GroupService.getMembers(params.groupId || 'group-1');
+  const resolvedGroupId = (params?.groupId && params.groupId !== 'group-1') ? params.groupId : (GroupService.getActiveGroupId() || '0cae6a08-5cf3-466e-840a-0f6cf3a8f3ac');
+  const members = GroupService.getMembers(resolvedGroupId);
   const myMemberInfo = members.find((m) => m.userId === activeUser.id);
   const isBlocked = myMemberInfo?.isBlockedFinancial || false;
   const isPendingApproval = myMemberInfo?.status === 'pending_approval';
   const isDirector = myMemberInfo?.role === 'presidente' || myMemberInfo?.role === 'adm' || myMemberInfo?.role === 'tesoureiro';
 
-  const handleConfirm = () => {
+  const handleConfirm = async () => {
     if (isPendingApproval) {
       setNotification('Sua entrada no grupo ainda está em análise pela diretoria (Presidente, ADM ou Tesoureiro).');
       return;
     }
     try {
-      const res = MatchService.confirmAttendance(match.id, activeUser, match.maxPlayers, params.groupId);
+      const res = await MatchService.confirmAttendance(match.id, activeUser, match.maxPlayers, params.groupId);
       setAttendances(MatchService.getAttendances(match.id));
       const isWait = res.status === 'waitlist';
       setNotification(isWait ? 'Vagas principais esgotadas. Você entrou na Fila de Espera!' : 'Presença confirmada com sucesso!');
       setTimeout(() => setNotification(null), 4000);
+      const cloudAtts = await MatchService.syncAttendancesFromCloud(match.id);
+      setAttendances(cloudAtts);
     } catch (err: any) {
       alert(err?.message || 'Erro ao confirmar presença');
     }
   };
 
-  const handleCancel = () => {
-    const res = MatchService.cancelAttendance(match.id, activeUser.id);
+  const handleCancel = async () => {
+    const res = await MatchService.cancelAttendance(match.id, activeUser.id);
     setAttendances(MatchService.getAttendances(match.id));
     if (res.promotedUser) {
       setNotification(`Sua presença foi cancelada. O atleta ${res.promotedUser.name} foi promovido da fila de espera!`);
@@ -119,6 +144,8 @@ export default function AttendancePage({ params }: { params: { groupId: string; 
       setNotification('Sua presença foi cancelada.');
     }
     setTimeout(() => setNotification(null), 4000);
+    const cloudAtts = await MatchService.syncAttendancesFromCloud(match.id);
+    setAttendances(cloudAtts);
   };
 
   const handleAddGuest = (e: React.FormEvent) => {

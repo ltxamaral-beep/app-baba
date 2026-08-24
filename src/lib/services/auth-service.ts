@@ -25,7 +25,56 @@ export interface RegisterAthletePayload {
   weightKg?: number;
 }
 
+// Helper seguro de timeout para chamadas assíncronas
+async function withTimeout<T>(promise: PromiseLike<T>, ms: number = 6000, errorMsg: string = 'Tempo limite esgotado.'): Promise<T> {
+  let timer: any;
+  const timeoutPromise = new Promise<T>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(errorMsg));
+    }, ms);
+  });
+
+  try {
+    const result = await Promise.race([promise, timeoutPromise]);
+    clearTimeout(timer);
+    return result;
+  } catch (err) {
+    clearTimeout(timer);
+    throw err;
+  }
+}
+
 export const AuthService = {
+  /**
+   * Converte um registro da tabela `users` do banco para o tipo UserProfile
+   */
+  mapDbUserToProfile(dbUser: any): UserProfile {
+    const currentLocal = UserService.getCurrentUser();
+    return {
+      id: dbUser.id,
+      name: dbUser.name || currentLocal.name || 'Atleta',
+      nickname: dbUser.nickname || currentLocal.nickname || undefined,
+      email: dbUser.email || currentLocal.email || '',
+      phone: dbUser.phone || currentLocal.phone || '',
+      cpf: dbUser.cpf || currentLocal.cpf || '',
+      cep: dbUser.cep || currentLocal.cep || undefined,
+      street: dbUser.street || currentLocal.street || undefined,
+      number: dbUser.number || currentLocal.number || undefined,
+      neighborhood: dbUser.neighborhood || currentLocal.neighborhood || undefined,
+      city: dbUser.city || currentLocal.city || undefined,
+      state: dbUser.state || currentLocal.state || undefined,
+      address: dbUser.address || currentLocal.address || '',
+      avatarUrl: dbUser.avatar_url || currentLocal.avatarUrl,
+      mainPosition: dbUser.main_position || currentLocal.mainPosition || 'meia',
+      secondaryPosition: dbUser.secondary_position || currentLocal.secondaryPosition,
+      dominantFoot: dbUser.dominant_foot || currentLocal.dominantFoot || 'destro',
+      heightCm: dbUser.height_cm || currentLocal.heightCm,
+      weightKg: dbUser.weight_kg || currentLocal.weightKg,
+      overallRating: dbUser.overall_rating || currentLocal.overallRating || 6.5,
+      createdAt: dbUser.created_at || currentLocal.createdAt || new Date().toISOString(),
+    };
+  },
+
   /**
    * Inicia o fluxo de login ou cadastro seguro com a conta do Google via Supabase OAuth
    */
@@ -54,7 +103,7 @@ export const AuthService = {
         ? `${window.location.origin}/auth/callback`
         : undefined;
 
-      const { data, error } = await supabase.auth.signInWithOAuth({
+      const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
           redirectTo: redirectUrl,
@@ -76,7 +125,7 @@ export const AuthService = {
   },
 
   /**
-   * Login exclusivo por CPF e Senha
+   * Login por CPF e Senha
    */
   async signInWithCpf(cpf: string, password?: string): Promise<{ success: boolean; error?: string; user?: UserProfile }> {
     const cleanCpf = cpf.replace(/\D/g, '');
@@ -91,47 +140,63 @@ export const AuthService = {
 
     try {
       if (isSupabaseConfigured && supabase) {
-        // Busca o usuário no banco pelo CPF
-        const { data: dbUser } = await supabase
-          .from('users')
-          .select('*')
-          .or(`cpf.eq.${cpf},cpf.eq.${cleanCpf}`)
-          .maybeSingle();
+        // 1. Busca o usuário no banco pelo CPF com timeout
+        let dbUser: any = null;
+        try {
+          const dbRes = await withTimeout(
+            supabase
+              .from('users')
+              .select('*')
+              .or(`cpf.eq.${cpf},cpf.eq.${cleanCpf}`)
+              .maybeSingle(),
+            5000
+          );
+          dbUser = dbRes.data;
+        } catch (e) {
+          console.warn('Timeout na busca por CPF na tabela users:', e);
+        }
 
         const emailToAuth = dbUser?.email || `cpf_${cleanCpf}@gestaopelada.com`;
 
-        const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-          email: emailToAuth,
-          password: password,
-        });
+        // 2. Tenta autenticar na Auth com timeout
+        let authData: any = null;
+        let authError: any = null;
+        try {
+          const authRes = await withTimeout(
+            supabase.auth.signInWithPassword({
+              email: emailToAuth,
+              password: password,
+            }),
+            5000
+          );
+          authData = authRes.data;
+          authError = authRes.error;
+        } catch (e: any) {
+          authError = { message: e?.message || 'Timeout' };
+        }
 
         if (dbUser) {
-          const currentLocal = UserService.getCurrentUser();
-          const profile: UserProfile = {
-            id: dbUser.id,
-            name: dbUser.name || currentLocal.name,
-            nickname: dbUser.nickname || currentLocal.nickname || undefined,
-            email: dbUser.email || currentLocal.email,
-            phone: dbUser.phone || currentLocal.phone,
-            cpf: dbUser.cpf || currentLocal.cpf,
-            cep: dbUser.cep || currentLocal.cep || undefined,
-            street: dbUser.street || currentLocal.street || undefined,
-            number: dbUser.number || currentLocal.number || undefined,
-            neighborhood: dbUser.neighborhood || currentLocal.neighborhood || undefined,
-            city: dbUser.city || currentLocal.city || undefined,
-            state: dbUser.state || currentLocal.state || undefined,
-            address: dbUser.address || currentLocal.address,
-            avatarUrl: dbUser.avatar_url || currentLocal.avatarUrl,
-            mainPosition: dbUser.main_position || currentLocal.mainPosition,
-            secondaryPosition: dbUser.secondary_position || currentLocal.secondaryPosition,
-            dominantFoot: dbUser.dominant_foot || currentLocal.dominantFoot,
-            heightCm: dbUser.height_cm || currentLocal.heightCm,
-            weightKg: dbUser.weight_kg || currentLocal.weightKg,
-            overallRating: dbUser.overall_rating || currentLocal.overallRating || 6.5,
-            createdAt: dbUser.created_at || currentLocal.createdAt,
-          };
+          const profile = this.mapDbUserToProfile(dbUser);
           UserService.setCurrentUser(profile);
           return { success: true, user: profile };
+        }
+
+        if (authData?.user) {
+          const newProfile: UserProfile = {
+            id: authData.user.id,
+            name: `Atleta ${cleanCpf.slice(-4)}`,
+            nickname: 'Craque',
+            email: emailToAuth,
+            phone: '(11) 99999-8888',
+            cpf: cpf,
+            address: 'São Paulo, SP',
+            mainPosition: 'meia',
+            dominantFoot: 'destro',
+            overallRating: 6.5,
+            createdAt: new Date().toISOString(),
+          };
+          UserService.setCurrentUser(newProfile);
+          return { success: true, user: newProfile };
         }
 
         if (authError && !dbUser) {
@@ -159,29 +224,15 @@ export const AuthService = {
         return { success: true, user: foundMock };
       }
 
-      // Cria atleta padrão associado ao CPF
-      const defaultUser: UserProfile = {
-        id: generateUUID(),
-        name: `Atleta ${cleanCpf.slice(-4)}`,
-        nickname: 'Craque',
-        email: `cpf_${cleanCpf}@gestaopelada.com`,
-        phone: '(11) 99999-8888',
-        cpf: cpf,
-        address: 'São Paulo, SP',
-        mainPosition: 'meia',
-        dominantFoot: 'destro',
-        overallRating: 6.5,
-        createdAt: new Date().toISOString(),
-      };
-      UserService.setCurrentUser(defaultUser);
-      return { success: true, user: defaultUser };
+      // Se nenhum usuário foi localizado
+      return { success: false, error: 'CPF não encontrado. Crie uma conta grátis para começar.' };
     } catch (err: any) {
       return { success: false, error: err?.message || 'Falha ao autenticar com CPF.' };
     }
   },
 
   /**
-   * Login com Email e Senha (Compatibilidade)
+   * Login com Email e Senha
    */
   async signInWithEmail(email: string, password?: string): Promise<{ success: boolean; error?: string; user?: UserProfile }> {
     const cleanEmail = email.trim().toLowerCase();
@@ -192,59 +243,126 @@ export const AuthService = {
     }
 
     if (!cleanEmail || !cleanEmail.includes('@')) {
-      return { success: false, error: 'Informe um e-mail válido' };
+      return { success: false, error: 'Informe um e-mail válido.' };
     }
 
     if (!password) {
-      return { success: false, error: 'Informe sua senha' };
+      return { success: false, error: 'Informe sua senha de acesso.' };
     }
 
     try {
       if (isSupabaseConfigured && supabase) {
-        // Tenta autenticar via Supabase Auth
-        const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-          email: cleanEmail,
-          password: password,
-        });
+        // Tenta autenticar no Supabase Auth com timeout
+        let authData: any = null;
+        let authError: any = null;
 
-        // Busca o perfil do atleta na tabela `users`
-        const { data: dbUser, error: dbError } = await supabase
-          .from('users')
-          .select('*')
-          .eq('email', cleanEmail)
-          .maybeSingle();
-
-        if (dbUser) {
-          const currentLocal = UserService.getCurrentUser();
-          const profile: UserProfile = {
-            id: dbUser.id,
-            name: dbUser.name || currentLocal.name,
-            nickname: dbUser.nickname || currentLocal.nickname || undefined,
-            email: dbUser.email || currentLocal.email,
-            phone: dbUser.phone || currentLocal.phone,
-            cpf: dbUser.cpf || currentLocal.cpf,
-            cep: dbUser.cep || currentLocal.cep || undefined,
-            street: dbUser.street || currentLocal.street || undefined,
-            number: dbUser.number || currentLocal.number || undefined,
-            neighborhood: dbUser.neighborhood || currentLocal.neighborhood || undefined,
-            city: dbUser.city || currentLocal.city || undefined,
-            state: dbUser.state || currentLocal.state || undefined,
-            address: dbUser.address || currentLocal.address,
-            avatarUrl: dbUser.avatar_url || currentLocal.avatarUrl,
-            mainPosition: dbUser.main_position || currentLocal.mainPosition,
-            secondaryPosition: dbUser.secondary_position || currentLocal.secondaryPosition,
-            dominantFoot: dbUser.dominant_foot || currentLocal.dominantFoot,
-            heightCm: dbUser.height_cm || currentLocal.heightCm,
-            weightKg: dbUser.weight_kg || currentLocal.weightKg,
-            overallRating: dbUser.overall_rating || currentLocal.overallRating || 6.5,
-            createdAt: dbUser.created_at || currentLocal.createdAt,
-          };
-          UserService.setCurrentUser(profile);
-          return { success: true, user: profile };
+        try {
+          const authRes = await withTimeout(
+            supabase.auth.signInWithPassword({
+              email: cleanEmail,
+              password: password,
+            }),
+            5000
+          );
+          authData = authRes.data;
+          authError = authRes.error;
+        } catch (authTimeoutErr: any) {
+          console.warn('Timeout no Supabase Auth:', authTimeoutErr);
+          authError = { message: authTimeoutErr?.message || 'Timeout' };
         }
 
-        if (authError && !dbUser) {
-          return { success: false, error: 'E-mail ou senha incorretos' };
+        // Se autenticou no Supabase Auth com sucesso
+        if (authData?.user) {
+          const authUser = authData.user;
+          // Busca o perfil do atleta na tabela `users`
+          let dbUser: any = null;
+          try {
+            const dbRes = await withTimeout(
+              supabase
+                .from('users')
+                .select('*')
+                .or(`id.eq.${authUser.id},email.eq.${cleanEmail}`)
+                .maybeSingle(),
+              5000
+            );
+            dbUser = dbRes.data;
+          } catch (dbErr) {
+            console.warn('Erro ao consultar tabela users:', dbErr);
+          }
+
+          if (dbUser) {
+            const profile = this.mapDbUserToProfile(dbUser);
+            UserService.setCurrentUser(profile);
+            return { success: true, user: profile };
+          } else {
+            // Cria registro na tabela users caso ainda não exista
+            const newProfile: UserProfile = {
+              id: authUser.id,
+              name: authUser.user_metadata?.full_name || authUser.user_metadata?.name || cleanEmail.split('@')[0],
+              nickname: authUser.user_metadata?.nickname || undefined,
+              email: cleanEmail,
+              phone: authUser.user_metadata?.phone || '(11) 99999-8888',
+              cpf: authUser.user_metadata?.cpf || '000.000.000-00',
+              address: 'São Paulo, SP',
+              avatarUrl: authUser.user_metadata?.avatar_url,
+              mainPosition: 'meia',
+              dominantFoot: 'destro',
+              overallRating: 6.5,
+              createdAt: new Date().toISOString(),
+            };
+
+            try {
+              await withTimeout(
+                supabase.from('users').insert([{
+                  id: newProfile.id,
+                  name: newProfile.name,
+                  email: newProfile.email,
+                  phone: newProfile.phone,
+                  cpf: newProfile.cpf,
+                  address: newProfile.address,
+                  main_position: 'meia',
+                  dominant_foot: 'destro',
+                  overall_rating: 6.5,
+                }]),
+                4000
+              );
+            } catch (e) {
+              console.warn('Aviso ao criar linha em users:', e);
+            }
+
+            UserService.setCurrentUser(newProfile);
+            return { success: true, user: newProfile };
+          }
+        }
+
+        // Se deu erro no Auth ou timeout, checa se existe na tabela users
+        try {
+          const dbRes = await withTimeout(
+            supabase
+              .from('users')
+              .select('*')
+              .eq('email', cleanEmail)
+              .maybeSingle(),
+            4000
+          );
+          const dbUser = dbRes.data;
+
+          if (dbUser) {
+            const profile = this.mapDbUserToProfile(dbUser);
+            UserService.setCurrentUser(profile);
+            return { success: true, user: profile };
+          }
+        } catch (e) {
+          console.warn('Erro ao checar fallback users:', e);
+        }
+
+        if (authError) {
+          if (authError.message === 'Invalid login credentials' || authError.code === 'invalid_credentials') {
+            return { success: false, error: 'E-mail ou senha incorretos.' };
+          }
+          if (authError.message?.toLowerCase().includes('email not confirmed')) {
+            return { success: false, error: 'E-mail não confirmado. Verifique seu e-mail.' };
+          }
         }
       }
 
@@ -256,23 +374,17 @@ export const AuthService = {
         return { success: true, user: current };
       }
 
-      const defaultUser: UserProfile = {
-        id: generateUUID(),
-        name: cleanEmail.split('@')[0],
-        nickname: 'Craque',
-        email: cleanEmail,
-        phone: '(11) 99999-8888',
-        cpf: '000.000.000-00',
-        address: 'São Paulo, SP',
-        mainPosition: 'meia',
-        dominantFoot: 'destro',
-        overallRating: 6.5,
-        createdAt: new Date().toISOString(),
-      };
-      UserService.setCurrentUser(defaultUser);
-      return { success: true, user: defaultUser };
+      const foundMock = mockUsers.find(
+        (u) => (u.email || '').toLowerCase() === cleanEmail
+      );
+      if (foundMock) {
+        UserService.setCurrentUser(foundMock);
+        return { success: true, user: foundMock };
+      }
+
+      return { success: false, error: 'E-mail ou senha incorretos. Caso ainda não tenha conta, cadastre-se.' };
     } catch (err: any) {
-      return { success: false, error: err?.message || 'Falha ao autenticar' };
+      return { success: false, error: err?.message || 'Falha ao autenticar. Tente novamente.' };
     }
   },
 
@@ -284,52 +396,66 @@ export const AuthService = {
       let userId = generateUUID();
 
       if (isSupabaseConfigured && supabase) {
-        // Se tiver senha informada, cadastra no Supabase Auth
+        // Se tiver senha informada, cadastra no Supabase Auth com timeout
         if (data.password && data.password.length >= 6) {
-          const { data: authRes, error: authErr } = await supabase.auth.signUp({
-            email: data.email,
-            password: data.password,
-            options: {
-              data: {
-                name: data.name,
-                nickname: data.nickname,
-                phone: data.phone,
-                cpf: data.cpf,
-                avatar_url: data.avatarUrl,
-              }
-            }
-          });
+          try {
+            const { data: authRes } = await withTimeout(
+              supabase.auth.signUp({
+                email: data.email,
+                password: data.password,
+                options: {
+                  data: {
+                    name: data.name,
+                    nickname: data.nickname,
+                    phone: data.phone,
+                    cpf: data.cpf,
+                    avatar_url: data.avatarUrl,
+                  }
+                }
+              }),
+              6000
+            );
 
-          if (authRes.user?.id) {
-            userId = authRes.user.id;
+            if (authRes?.user?.id) {
+              userId = authRes.user.id;
+            }
+          } catch (authErr) {
+            console.warn('Aviso ao registrar no Supabase Auth:', authErr);
           }
         }
 
         // Salva na tabela pública de usuários
-        const { data: inserted, error: insertErr } = await supabase.from('users').insert([{
-          id: userId,
-          name: data.name,
-          nickname: data.nickname || null,
-          email: data.email,
-          phone: data.phone,
-          cpf: data.cpf,
-          address: data.address,
-          avatar_url: data.avatarUrl || null,
-          main_position: data.mainPosition || 'meia',
-          secondary_position: data.secondaryPosition || null,
-          dominant_foot: data.dominantFoot || 'destro',
-          height_cm: data.heightCm || null,
-          weight_kg: data.weightKg || null,
-          overall_rating: 6.50
-        }]).select().single();
+        try {
+          const { data: inserted, error: insertErr } = await withTimeout(
+            supabase.from('users').insert([{
+              id: userId,
+              name: data.name,
+              nickname: data.nickname || null,
+              email: data.email,
+              phone: data.phone,
+              cpf: data.cpf,
+              address: data.address,
+              avatar_url: data.avatarUrl || null,
+              main_position: data.mainPosition || 'meia',
+              secondary_position: data.secondaryPosition || null,
+              dominant_foot: data.dominantFoot || 'destro',
+              height_cm: data.heightCm || null,
+              weight_kg: data.weightKg || null,
+              overall_rating: 6.50
+            }]).select().single(),
+            6000
+          );
 
-        if (insertErr) {
-          if (insertErr.code === '23505') {
-            return { success: false, error: 'E-mail ou CPF já cadastrado no sistema.' };
+          if (insertErr) {
+            if (insertErr.code === '23505') {
+              return { success: false, error: 'E-mail ou CPF já cadastrado no sistema.' };
+            }
+            console.warn('Aviso ao inserir no Postgres:', insertErr);
+          } else if (inserted) {
+            userId = inserted.id;
           }
-          console.warn('Aviso ao inserir no Postgres:', insertErr);
-        } else if (inserted) {
-          userId = inserted.id;
+        } catch (insertErr: any) {
+          console.warn('Aviso ao inserir usuário:', insertErr);
         }
       }
 
@@ -371,41 +497,21 @@ export const AuthService = {
     if (!isSupabaseConfigured || !supabase) return null;
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { data: { session } } = await withTimeout(supabase.auth.getSession(), 4000);
       if (!session || !session.user) return null;
 
       const authUser = session.user;
-      const { data: dbUser } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', authUser.id)
-        .maybeSingle();
+      const { data: dbUser } = await withTimeout(
+        supabase
+          .from('users')
+          .select('*')
+          .eq('id', authUser.id)
+          .maybeSingle(),
+        4000
+      );
 
       if (dbUser) {
-        const currentLocal = UserService.getCurrentUser();
-        const profile: UserProfile = {
-          id: dbUser.id,
-          name: dbUser.name || currentLocal.name || authUser.user_metadata?.full_name || 'Atleta',
-          nickname: dbUser.nickname || currentLocal.nickname || authUser.user_metadata?.nickname || undefined,
-          email: dbUser.email || currentLocal.email || authUser.email || '',
-          phone: dbUser.phone || currentLocal.phone || '',
-          cpf: dbUser.cpf || currentLocal.cpf || '',
-          cep: dbUser.cep || currentLocal.cep || undefined,
-          street: dbUser.street || currentLocal.street || undefined,
-          number: dbUser.number || currentLocal.number || undefined,
-          neighborhood: dbUser.neighborhood || currentLocal.neighborhood || undefined,
-          city: dbUser.city || currentLocal.city || undefined,
-          state: dbUser.state || currentLocal.state || undefined,
-          address: dbUser.address || currentLocal.address || '',
-          avatarUrl: dbUser.avatar_url || currentLocal.avatarUrl || authUser.user_metadata?.avatar_url,
-          mainPosition: dbUser.main_position || currentLocal.mainPosition || 'meia',
-          secondaryPosition: dbUser.secondary_position || currentLocal.secondaryPosition,
-          dominantFoot: dbUser.dominant_foot || currentLocal.dominantFoot || 'destro',
-          heightCm: dbUser.height_cm || currentLocal.heightCm,
-          weightKg: dbUser.weight_kg || currentLocal.weightKg,
-          overallRating: dbUser.overall_rating || currentLocal.overallRating || 6.5,
-          createdAt: dbUser.created_at || currentLocal.createdAt,
-        };
+        const profile = this.mapDbUserToProfile(dbUser);
         UserService.setCurrentUser(profile);
         return profile;
       } else {
@@ -425,18 +531,24 @@ export const AuthService = {
           createdAt: new Date().toISOString(),
         };
 
-        await supabase.from('users').insert([{
-          id: newProfile.id,
-          name: newProfile.name,
-          nickname: newProfile.nickname || null,
-          email: newProfile.email,
-          phone: newProfile.phone || '(00) 00000-0000',
-          cpf: `oauth_${Date.now()}`,
-          address: 'Não informado',
-          main_position: 'meia',
-          dominant_foot: 'destro',
-          overall_rating: 6.5
-        }]);
+        try {
+          await withTimeout(
+            supabase.from('users').insert([{
+              id: newProfile.id,
+              name: newProfile.name,
+              email: newProfile.email,
+              phone: newProfile.phone || '(00) 00000-0000',
+              cpf: `oauth_${Date.now()}`,
+              address: 'Não informado',
+              main_position: 'meia',
+              dominant_foot: 'destro',
+              overall_rating: 6.5
+            }]),
+            4000
+          );
+        } catch (e) {
+          console.warn('Aviso ao inserir usuário oauth:', e);
+        }
 
         UserService.setCurrentUser(newProfile);
         return newProfile;
@@ -453,7 +565,7 @@ export const AuthService = {
   async signOut(): Promise<void> {
     if (isSupabaseConfigured && supabase) {
       try {
-        await supabase.auth.signOut();
+        await withTimeout(supabase.auth.signOut(), 3000);
       } catch (e) {
         console.warn('Erro ao deslogar do Supabase:', e);
       }

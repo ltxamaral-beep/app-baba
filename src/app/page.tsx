@@ -128,10 +128,14 @@ export default function HomePage() {
         return;
       }
 
-      router.push('/dashboard');
+      // Redireciona com reload completo para recarregar a sessão
+      if (typeof window !== 'undefined') {
+        window.location.href = '/dashboard';
+      } else {
+        router.push('/dashboard');
+      }
     } catch (err) {
-      setLoginError('Erro ao autenticar.');
-    } finally {
+      setLoginError('Erro ao autenticar. Tente novamente.');
       setLoginLoading(false);
     }
   };

@@ -70,6 +70,13 @@ export interface Group {
   inviteCode: string;
   isPublic: boolean;
   whatsappGroupUrl?: string; // Link direto para o grupo do WhatsApp do baba
+  pixKey?: string;
+  pixKeyType?: string;
+  rulesFineYellowCard?: number;
+  rulesFineRedCard?: number;
+  rulesFineBlueCard?: number;
+  rulesFineLateArrival?: number;
+  rulesFineUnexcusedAbsence?: number;
   isOpenAttendance: boolean; // se a lista de presença está aberta
   createdBy: string;
   createdAt: string;
@@ -190,6 +197,9 @@ export interface AppNotification {
     membershipType?: string;
     slotNumber?: number;
     arrivalOrder?: number;
+    category?: TransactionCategory;
+    amount?: number;
+    count?: number;
   };
   createdAt: string;
 }
