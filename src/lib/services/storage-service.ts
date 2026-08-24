@@ -1583,14 +1583,14 @@ export const MatchService = {
     }
   },
 
-  openMatchAttendance(
+  async openMatchAttendance(
     groupId: string, 
     matchDate: string, 
     startTime: string, 
     maxPlayers: number, 
     costDiarista: number = 25,
     confirmationDeadline?: string
-  ): Match {
+  ): Promise<Match> {
     const matches = this.getMatches(groupId);
     const newMatchId = generateUUID();
     const newMatch: Match = {
@@ -1608,35 +1608,33 @@ export const MatchService = {
     setStored(`matches_${groupId}`, matches);
 
     // Marca o grupo como lista aberta
-    GroupService.updateGroup(groupId, { isOpenAttendance: true, maxSlots: maxPlayers });
+    await GroupService.updateGroup(groupId, { isOpenAttendance: true, maxSlots: maxPlayers });
 
     // Sincroniza partida no Supabase
     if (isSupabaseConfigured && supabase) {
-      (async () => {
-        try {
-          const targetG = GroupService.getGroupById(groupId);
-          if (targetG && !isValidUUID(targetG.id)) {
-            await GroupService.syncAllWithCloud();
-          }
-
-          const targetGroupIdInCloud = isValidUUID(groupId) ? groupId : (targetG && isValidUUID(targetG.id) ? targetG.id : null);
-          if (targetGroupIdInCloud) {
-            const formattedTime = startTime.length === 5 ? `${startTime}:00` : startTime;
-            await supabase.from('matches').upsert([{
-              id: newMatch.id,
-              group_id: targetGroupIdInCloud,
-              match_date: matchDate,
-              start_time: formattedTime,
-              confirmation_deadline: confirmationDeadline || null,
-              max_players: maxPlayers,
-              cost_diarista: costDiarista,
-              status: 'scheduled',
-            }]);
-          }
-        } catch (err) {
-          console.warn('Erro ao salvar partida no Supabase:', err);
+      try {
+        const targetG = GroupService.getGroupById(groupId);
+        if (targetG && !isValidUUID(targetG.id)) {
+          await GroupService.syncAllWithCloud();
         }
-      })();
+
+        const targetGroupIdInCloud = isValidUUID(groupId) ? groupId : (targetG && isValidUUID(targetG.id) ? targetG.id : null);
+        if (targetGroupIdInCloud) {
+          const formattedTime = startTime.length === 5 ? `${startTime}:00` : startTime;
+          await supabase.from('matches').upsert([{
+            id: newMatch.id,
+            group_id: targetGroupIdInCloud,
+            match_date: matchDate,
+            start_time: formattedTime,
+            confirmation_deadline: confirmationDeadline || null,
+            max_players: maxPlayers,
+            cost_diarista: costDiarista,
+            status: 'scheduled',
+          }]);
+        }
+      } catch (err) {
+        console.warn('Erro ao salvar partida no Supabase:', err);
+      }
     }
 
     // Dispara notificação oficial para todos os associados do grupo

@@ -214,17 +214,17 @@ export default function PeladaHubPage({ params }: { params: { groupId: string } 
     : null;
 
   // Abertura manual da lista pela comissão
-  const handleOpenAttendance = (e: React.FormEvent) => {
+  const handleOpenAttendance = async (e: React.FormEvent) => {
     e.preventDefault();
     const newSlots = Number(openMatchData.maxPlayers) || 24;
-    GroupService.updateGroup(group.id, { maxSlots: newSlots });
+    await GroupService.updateGroup(group.id, { maxSlots: newSlots, isOpenAttendance: true });
 
     let confirmationDeadline: string | undefined = undefined;
     if (openMatchData.hasDeadline && openMatchData.deadlineDate) {
       confirmationDeadline = `${openMatchData.deadlineDate}T${openMatchData.deadlineTime || '12:00'}:00`;
     }
 
-    const newMatch = MatchService.openMatchAttendance(
+    const newMatch = await MatchService.openMatchAttendance(
       group.id,
       openMatchData.matchDate,
       openMatchData.startTime,
@@ -232,9 +232,12 @@ export default function PeladaHubPage({ params }: { params: { groupId: string } 
       group.dailyFee || 25,
       confirmationDeadline
     );
+
+    setActiveMatch(newMatch);
+    setGroup((prev) => prev ? { ...prev, isOpenAttendance: true, maxSlots: newSlots } : prev);
     setOpenModalOpen(false);
     showToast('Lista de presença da pelada aberta com sucesso! ⚽', 'success');
-    loadData();
+    await loadData();
   };
 
   const handlePromoteToConfirmed = (attendanceId: string, athleteName: string) => {

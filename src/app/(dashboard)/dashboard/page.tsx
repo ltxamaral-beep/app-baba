@@ -349,20 +349,19 @@ export default function DashboardPage() {
     }
   };
 
-  // Abertura manual da lista de presença
-  const handleOpenAttendanceSubmit = (e: React.FormEvent) => {
+  const handleOpenAttendance = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeGroup) return;
 
     const newSlots = Number(openMatchData.maxPlayers) || 24;
-    GroupService.updateGroup(activeGroup.id, { maxSlots: newSlots });
+    await GroupService.updateGroup(activeGroup.id, { maxSlots: newSlots, isOpenAttendance: true });
 
     let confirmationDeadline: string | undefined = undefined;
     if (openMatchData.hasDeadline && openMatchData.deadlineDate) {
       confirmationDeadline = `${openMatchData.deadlineDate}T${openMatchData.deadlineTime || '12:00'}:00`;
     }
 
-    MatchService.openMatchAttendance(
+    await MatchService.openMatchAttendance(
       activeGroup.id,
       openMatchData.matchDate,
       openMatchData.startTime,
@@ -372,7 +371,7 @@ export default function DashboardPage() {
     );
 
     setOpenModalOpen(false);
-    loadDashboardData();
+    await loadDashboardData();
   };
 
   return (
