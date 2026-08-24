@@ -1462,18 +1462,35 @@ export const MatchService = {
     const direct = getStored<Match[]>(`matches_${groupId}`, []);
     if (direct.length > 0) return direct;
 
-    // Fallback: se não encontrar no groupId específico, busca se há partidas em outros IDs locais
-    const allGroups = GroupService.getGroups();
-    for (const g of allGroups) {
-      if (g.id !== groupId) {
-        const other = getStored<Match[]>(`matches_${g.id}`, []);
-        if (other.length > 0) {
-          const migrated = other.map((m) => ({ ...m, groupId }));
-          setStored(`matches_${groupId}`, migrated);
-          return migrated;
+    // Varredura exaustiva em TODAS as chaves de partidas salvas no LocalStorage
+    if (typeof window !== 'undefined') {
+      try {
+        const foundMatches: Match[] = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && key.startsWith('pelada_matches_')) {
+            const raw = localStorage.getItem(key);
+            if (raw) {
+              const list: Match[] = JSON.parse(raw);
+              if (Array.isArray(list) && list.length > 0) {
+                list.forEach((m) => {
+                  if (!foundMatches.some((x) => x.id === m.id)) {
+                    foundMatches.push({ ...m, groupId });
+                  }
+                });
+              }
+            }
+          }
         }
+        if (foundMatches.length > 0) {
+          setStored(`matches_${groupId}`, foundMatches);
+          return foundMatches;
+        }
+      } catch (e) {
+        console.warn('Erro ao varrer partidas locais:', e);
       }
     }
+
     return direct;
   },
 
@@ -2277,16 +2294,32 @@ export const FinanceService = {
     const direct = getStored<FinancialTransaction[]>(`transactions_${groupId}`, []);
     if (direct.length > 0) return direct;
 
-    // Fallback inteligente: busca em outros grupos locais (ex: group-1 ou criados anteriormente) para não perder nenhum lançamento
-    const allGroups = GroupService.getGroups();
-    for (const g of allGroups) {
-      if (g.id !== groupId) {
-        const other = getStored<FinancialTransaction[]>(`transactions_${g.id}`, []);
-        if (other.length > 0) {
-          const migrated = other.map((t) => ({ ...t, groupId }));
-          setStored(`transactions_${groupId}`, migrated);
-          return migrated;
+    // Varredura exaustiva em TODAS as chaves de transações salvas no LocalStorage
+    if (typeof window !== 'undefined') {
+      try {
+        const foundTransactions: FinancialTransaction[] = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && key.startsWith('pelada_transactions_')) {
+            const raw = localStorage.getItem(key);
+            if (raw) {
+              const list: FinancialTransaction[] = JSON.parse(raw);
+              if (Array.isArray(list) && list.length > 0) {
+                list.forEach((t) => {
+                  if (!foundTransactions.some((x) => x.id === t.id)) {
+                    foundTransactions.push({ ...t, groupId });
+                  }
+                });
+              }
+            }
+          }
         }
+        if (foundTransactions.length > 0) {
+          setStored(`transactions_${groupId}`, foundTransactions);
+          return foundTransactions;
+        }
+      } catch (e) {
+        console.warn('Erro ao varrer transações locais:', e);
       }
     }
 
@@ -2302,18 +2335,39 @@ export const FinanceService = {
         return local;
       }
 
-      const { data, error } = await supabase
+      // 1. Busca transações do grupo no Supabase
+      let { data, error } = await supabase
         .from('financial_transactions')
         .select('*')
         .eq('group_id', groupId)
         .order('created_at', { ascending: false });
 
-      if (error || !data) {
-        if (error) console.warn('Aviso ao consultar transações do Supabase:', error);
+      // Se não encontrou transações para o groupId específico, busca transações salvas no Supabase para qualquer grupo e migra para cá
+      if (!data || data.length === 0) {
+        const { data: allTrans } = await supabase
+          .from('financial_transactions')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(100);
+
+        if (allTrans && allTrans.length > 0) {
+          data = allTrans;
+          for (const t of allTrans) {
+            if (t.group_id !== groupId && isValidUUID(groupId)) {
+              try {
+                await supabase.from('financial_transactions').update({ group_id: groupId }).eq('id', t.id);
+              } catch {}
+            }
+          }
+        }
+      }
+
+      if (error && (!data || data.length === 0)) {
+        console.warn('Aviso ao consultar transações do Supabase:', error);
         return local;
       }
 
-      const remoteTrans: FinancialTransaction[] = data.map((t: any) => ({
+      const remoteTrans: FinancialTransaction[] = (data || []).map((t: any) => ({
         id: t.id,
         groupId: t.group_id,
         userId: t.user_id || undefined,
@@ -2331,11 +2385,21 @@ export const FinanceService = {
 
       const map = new Map<string, FinancialTransaction>();
       remoteTrans.forEach((t) => map.set(t.id, t));
-      local.forEach((t) => {
+
+      const currentUser = UserService.getCurrentUser();
+      let validAdminUserId = currentUser.id;
+      try {
+        validAdminUserId = await UserService.ensureUserInCloud(currentUser);
+      } catch {}
+
+      // Envia transações locais pendentes para a nuvem
+      for (const t of local) {
         if (!map.has(t.id)) {
           map.set(t.id, t);
-          if (isValidUUID(t.id) && isValidUUID(groupId)) {
-            supabase?.from('financial_transactions').upsert([{
+        }
+        if (isValidUUID(t.id) && isValidUUID(groupId)) {
+          try {
+            await supabase.from('financial_transactions').upsert([{
               id: t.id,
               group_id: groupId,
               user_id: isValidUUID(t.userId || '') ? t.userId : null,
@@ -2347,11 +2411,13 @@ export const FinanceService = {
               due_date: t.dueDate,
               paid_at: t.paidAt || null,
               status: t.status,
-              recorded_by: isValidUUID(t.recordedBy) ? t.recordedBy : '00000000-0000-4000-8000-000000000001',
-            }]).then(() => {});
+              recorded_by: isValidUUID(t.recordedBy) ? t.recordedBy : validAdminUserId,
+            }]);
+          } catch (e) {
+            console.warn('Aviso ao subir transação local para Supabase:', e);
           }
         }
-      });
+      }
 
       const merged = Array.from(map.values()).sort(
         (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
@@ -2381,20 +2447,26 @@ export const FinanceService = {
     if (isSupabaseConfigured && supabase) {
       (async () => {
         try {
-          await supabase.from('financial_transactions').upsert([{
-            id: newId,
-            group_id: groupId,
-            user_id: isValidUUID(data.userId || '') ? data.userId : null,
-            userName: data.userName || null,
-            type: data.type,
-            category: data.category,
-            description: data.description,
-            amount: data.amount,
-            due_date: data.dueDate,
-            paid_at: data.paidAt || null,
-            status: data.status,
-            recorded_by: isValidUUID(data.recordedBy) ? data.recordedBy : '00000000-0000-4000-8000-000000000001',
-          }]);
+          const currentUser = UserService.getCurrentUser();
+          const validAdminUserId = await UserService.ensureUserInCloud(currentUser);
+          const validRecordedBy = isValidUUID(data.recordedBy) ? data.recordedBy : validAdminUserId;
+
+          if (isValidUUID(groupId)) {
+            await supabase.from('financial_transactions').upsert([{
+              id: newId,
+              group_id: groupId,
+              user_id: isValidUUID(data.userId || '') ? data.userId : null,
+              userName: data.userName || null,
+              type: data.type,
+              category: data.category,
+              description: data.description,
+              amount: data.amount,
+              due_date: data.dueDate,
+              paid_at: data.paidAt || null,
+              status: data.status,
+              recorded_by: validRecordedBy,
+            }]);
+          }
         } catch (err) {
           console.warn('Erro ao salvar transação no Supabase:', err);
         }
