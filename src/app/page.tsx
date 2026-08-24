@@ -8,6 +8,7 @@ import { validateCPF } from '@/lib/utils/cpf-validator';
 import { fetchAddressByCEP } from '@/lib/utils/cep-service';
 import { GoogleAuthButton } from '@/components/auth/GoogleAuthButton';
 import { AuthService } from '@/lib/services/auth-service';
+import { AvatarUpload } from '@/components/profile/AvatarUpload';
 import { 
   ShieldCheck, 
   Lock, 
@@ -22,8 +23,7 @@ import {
   Sparkles, 
   Activity,
   Trophy,
-  DollarSign,
-  Users,
+  Smile,
   LogIn,
   UserPlus
 } from 'lucide-react';
@@ -43,7 +43,7 @@ export default function HomePage() {
   const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');
 
   // --- ESTADO DO LOGIN ---
-  const [loginIdentifier, setLoginIdentifier] = useState('');
+  const [loginCpf, setLoginCpf] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [loginLoading, setLoginLoading] = useState(false);
@@ -57,6 +57,8 @@ export default function HomePage() {
 
   const [registerForm, setRegisterForm] = useState<{
     name: string;
+    nickname: string;
+    avatarUrl: string;
     email: string;
     password: string;
     cpf: string;
@@ -75,6 +77,8 @@ export default function HomePage() {
     weightKg: string;
   }>({
     name: '',
+    nickname: '',
+    avatarUrl: '',
     email: '',
     password: '',
     cpf: '',
@@ -93,15 +97,23 @@ export default function HomePage() {
     weightKg: '',
   });
 
-  // HANDLER LOGIN
+  // HANDLER LOGIN POR CPF
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!loginIdentifier.trim()) {
-      setLoginError('Informe seu e-mail ou CPF.');
+    const cleanCpf = loginCpf.replace(/\D/g, '');
+
+    if (!cleanCpf) {
+      setLoginError('Informe seu CPF.');
       return;
     }
+
+    if (cleanCpf.length < 11) {
+      setLoginError('CPF incompleto. Digite os 11 números.');
+      return;
+    }
+
     if (!loginPassword) {
-      setLoginError('Informe sua senha.');
+      setLoginError('Informe sua senha de acesso.');
       return;
     }
 
@@ -109,11 +121,7 @@ export default function HomePage() {
     setLoginError('');
 
     try {
-      const emailToUse = loginIdentifier.includes('@')
-        ? loginIdentifier.trim().toLowerCase()
-        : `cpf_${loginIdentifier.replace(/\D/g, '')}@gestaopelada.com`;
-
-      const result = await AuthService.signInWithEmail(emailToUse, loginPassword);
+      const result = await AuthService.signInWithCpf(loginCpf, loginPassword);
       if (!result.success) {
         setLoginError(result.error || 'Credenciais inválidas.');
         setLoginLoading(false);
@@ -232,6 +240,8 @@ export default function HomePage() {
     try {
       const res = await AuthService.registerAthlete({
         name: registerForm.name,
+        nickname: registerForm.nickname.trim() || undefined,
+        avatarUrl: registerForm.avatarUrl || undefined,
         email: registerForm.email,
         password: registerForm.password,
         phone: registerForm.phone,
@@ -297,7 +307,7 @@ export default function HomePage() {
                 : 'text-slate-400 hover:text-white'
             }`}
           >
-            <LogIn className="w-4 h-4" /> Entrar no App
+            <LogIn className="w-4 h-4" /> Entrar com CPF
           </button>
           <button
             onClick={() => {
@@ -325,27 +335,31 @@ export default function HomePage() {
               <div className="relative flex py-1 items-center">
                 <div className="flex-grow border-t border-[#182737]"></div>
                 <span className="flex-shrink mx-4 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                  Ou com E-mail / Senha
+                  Ou acesse com seu CPF
                 </span>
                 <div className="flex-grow border-t border-[#182737]"></div>
               </div>
 
               <form onSubmit={handleLoginSubmit} className="space-y-4">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 uppercase mb-1.5">
-                    E-mail ou CPF
-                  </label>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-xs font-semibold text-slate-300 uppercase">
+                      CPF
+                    </label>
+                    <span className="text-[10px] text-[#00b49f] font-mono">Apenas números</span>
+                  </div>
                   <div className="relative">
-                    <Mail className="absolute left-3.5 top-3 w-4 h-4 text-slate-500" />
+                    <ShieldCheck className="absolute left-3.5 top-3 w-4 h-4 text-slate-500" />
                     <input
                       type="text"
-                      value={loginIdentifier}
+                      value={loginCpf}
+                      maxLength={14}
                       onChange={(e) => {
-                        setLoginIdentifier(e.target.value);
+                        setLoginCpf(maskCPF(e.target.value));
                         if (loginError) setLoginError('');
                       }}
-                      placeholder="seuemail@exemplo.com ou CPF"
-                      className="w-full bg-[#121e2b] border border-[#182737] rounded-xl pl-10 pr-4 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-[#00b49f]"
+                      placeholder="000.000.000-00"
+                      className="w-full bg-[#121e2b] border border-[#182737] rounded-xl pl-10 pr-4 py-2.5 text-sm text-white font-mono placeholder-slate-500 focus:outline-none focus:border-[#00b49f]"
                     />
                   </div>
                 </div>
@@ -400,12 +414,20 @@ export default function HomePage() {
             <div>
               {registeredSuccess ? (
                 <div className="text-center py-6 space-y-4">
-                  <div className="w-16 h-16 bg-[#00b49f]/20 text-[#00b49f] rounded-full flex items-center justify-center mx-auto border border-[#00b49f]/40">
-                    <CheckCircle2 className="w-10 h-10" />
-                  </div>
+                  {registerForm.avatarUrl ? (
+                    <img
+                      src={registerForm.avatarUrl}
+                      alt={registerForm.name}
+                      className="w-16 h-16 rounded-full mx-auto object-cover border-2 border-[#00b49f] shadow-lg shadow-[#00b49f]/30"
+                    />
+                  ) : (
+                    <div className="w-16 h-16 bg-[#00b49f]/20 text-[#00b49f] rounded-full flex items-center justify-center mx-auto border border-[#00b49f]/40">
+                      <CheckCircle2 className="w-10 h-10" />
+                    </div>
+                  )}
                   <h2 className="text-xl font-bold text-white">Cadastro Concluído!</h2>
                   <p className="text-xs text-slate-300">
-                    Atleta <strong className="text-[#00b49f]">{registerForm.name}</strong> registrado com sucesso.
+                    Atleta <strong className="text-[#00b49f]">{registerForm.name}</strong> {registerForm.nickname ? `(${registerForm.nickname})` : ''} registrado com sucesso.
                   </p>
 
                   <button
@@ -439,7 +461,7 @@ export default function HomePage() {
                       }`}>
                         {registerStep > 1 ? <CheckCircle2 className="w-3.5 h-3.5" /> : '1'}
                       </div>
-                      <span className="text-xs font-bold text-slate-200">Dados Pessoais</span>
+                      <span className="text-xs font-bold text-slate-200">Foto & Dados</span>
                     </div>
                     <div className="h-[2px] w-8 bg-[#182737]" />
                     <div className="flex items-center gap-2.5">
@@ -453,21 +475,47 @@ export default function HomePage() {
                   </div>
 
                   {registerStep === 1 && (
-                    <form onSubmit={handleNextRegisterStep} className="space-y-3">
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">Nome Completo</label>
-                        <input
-                          type="text"
-                          name="name"
-                          value={registerForm.name}
-                          onChange={handleRegisterChange}
-                          placeholder="Ex: Carlos Eduardo Silva"
-                          className="w-full bg-[#121e2b] border border-[#182737] rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[#00b49f]"
+                    <form onSubmit={handleNextRegisterStep} className="space-y-3.5">
+                      
+                      {/* Foto de Perfil */}
+                      <div className="bg-[#121e2b]/50 border border-[#182737] p-3 rounded-2xl flex flex-col items-center">
+                        <AvatarUpload
+                          currentAvatarUrl={registerForm.avatarUrl}
+                          onAvatarChange={(url) => setRegisterForm((prev) => ({ ...prev, avatarUrl: url }))}
+                          label="Foto de Perfil"
+                          size="sm"
                         />
-                        {registerErrors.name && <p className="text-rose-400 text-xs mt-1">{registerErrors.name}</p>}
                       </div>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {/* Nome e Apelido */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">Nome Completo</label>
+                          <input
+                            type="text"
+                            name="name"
+                            value={registerForm.name}
+                            onChange={handleRegisterChange}
+                            placeholder="Ex: Carlos Eduardo"
+                            className="w-full bg-[#121e2b] border border-[#182737] rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[#00b49f]"
+                          />
+                          {registerErrors.name && <p className="text-rose-400 text-xs mt-1">{registerErrors.name}</p>}
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">Apelido (no Baba)</label>
+                          <input
+                            type="text"
+                            name="nickname"
+                            value={registerForm.nickname}
+                            onChange={handleRegisterChange}
+                            placeholder="Ex: Canhotinha"
+                            className="w-full bg-[#121e2b] border border-[#182737] rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[#00b49f]"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                         <div>
                           <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">E-mail</label>
                           <input
@@ -495,9 +543,9 @@ export default function HomePage() {
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                         <div>
-                          <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">CPF</label>
+                          <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">CPF (Verificação)</label>
                           <input
                             type="text"
                             name="cpf"
@@ -505,7 +553,7 @@ export default function HomePage() {
                             value={registerForm.cpf}
                             onChange={handleRegisterChange}
                             placeholder="000.000.000-00"
-                            className="w-full bg-[#121e2b] border border-[#182737] rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[#00b49f]"
+                            className="w-full bg-[#121e2b] font-mono border border-[#182737] rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[#00b49f]"
                           />
                           {registerErrors.cpf && <p className="text-rose-400 text-xs mt-1">{registerErrors.cpf}</p>}
                         </div>
@@ -541,7 +589,7 @@ export default function HomePage() {
                             value={registerForm.cep}
                             onChange={handleCepChange}
                             placeholder="CEP 00000-000"
-                            className="col-span-1 bg-[#121e2b] border border-[#00b49f]/40 rounded-xl px-3 py-2 text-xs text-white font-bold"
+                            className="col-span-1 bg-[#121e2b] border border-[#00b49f]/40 rounded-xl px-3 py-2 text-xs text-white font-bold font-mono"
                           />
                           <input
                             type="text"

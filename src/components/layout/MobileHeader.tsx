@@ -281,7 +281,19 @@ export function MobileHeader({ title, showBack = false, onBack }: MobileHeaderPr
                 onClick={() => setDrawerOpen(false)}
                 className="flex items-center gap-2.5 p-2 rounded-xl text-xs font-semibold text-slate-300 hover:bg-[#182737] hover:text-white"
               >
-                <User className="w-4 h-4 text-[#00b49f]" /> Meu Perfil de Atleta
+                {UserService.getCurrentUser()?.avatarUrl ? (
+                  <img
+                    src={UserService.getCurrentUser()?.avatarUrl}
+                    alt="Perfil"
+                    className="w-5 h-5 rounded-full object-cover border border-[#00b49f]"
+                  />
+                ) : (
+                  <User className="w-4 h-4 text-[#00b49f]" />
+                )}
+                <span>
+                  {UserService.getCurrentUser()?.name}
+                  {UserService.getCurrentUser()?.nickname ? ` (${UserService.getCurrentUser()?.nickname})` : ''}
+                </span>
               </Link>
             </div>
           </div>

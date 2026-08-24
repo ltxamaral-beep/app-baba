@@ -6,6 +6,7 @@ import { UserProfile, UserPosition, DominantFoot } from '@/types';
 import { maskPhone, maskCEP } from '@/lib/utils/masks';
 import { fetchAddressByCEP } from '@/lib/utils/cep-service';
 import { showToast } from '@/components/ui/Toast';
+import { AvatarUpload } from '@/components/profile/AvatarUpload';
 import { 
   User, 
   ShieldCheck, 
@@ -17,7 +18,8 @@ import {
   Activity, 
   Trophy,
   Sparkles,
-  ArrowLeft
+  ArrowLeft,
+  Smile
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -29,6 +31,8 @@ export default function ProfilePage() {
 
   const [formData, setFormData] = useState({
     name: '',
+    nickname: '',
+    avatarUrl: '',
     email: '',
     phone: '',
     cpf: '',
@@ -51,6 +55,8 @@ export default function ProfilePage() {
     setUser(current);
     setFormData({
       name: current.name || '',
+      nickname: current.nickname || '',
+      avatarUrl: current.avatarUrl || '',
       email: current.email || '',
       phone: current.phone || '',
       cpf: current.cpf || '',
@@ -126,6 +132,8 @@ export default function ProfilePage() {
     try {
       const updated = await UserService.updateUserProfile(user?.id || '', {
         name: formData.name,
+        nickname: formData.nickname.trim() || undefined,
+        avatarUrl: formData.avatarUrl || undefined,
         email: formData.email,
         phone: formData.phone,
         address: formData.address,
@@ -144,7 +152,7 @@ export default function ProfilePage() {
         dominantFoot: updated.dominantFoot || 'destro',
       }));
       setSavedSuccess(true);
-      showToast('Perfil e características atualizados com sucesso! ✅', 'success');
+      showToast('Perfil, foto e características atualizados com sucesso! ✅', 'success');
       setTimeout(() => setSavedSuccess(false), 4000);
     } catch (err) {
       console.error(err);
@@ -190,12 +198,23 @@ export default function ProfilePage() {
           <div className="bg-gradient-to-b from-slate-900 via-slate-900/90 to-slate-950 border border-emerald-500/30 rounded-3xl p-6 text-center relative overflow-hidden shadow-xl">
             <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full blur-2xl" />
             
-            <div className="w-20 h-20 mx-auto rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-400 flex items-center justify-center text-3xl shadow-lg shadow-emerald-500/20 font-black mb-3">
-              ⚽
+            {/* Foto de Perfil com upload direto */}
+            <div className="mb-4">
+              <AvatarUpload
+                currentAvatarUrl={formData.avatarUrl}
+                onAvatarChange={(url) => setFormData((prev) => ({ ...prev, avatarUrl: url }))}
+                label="Foto do Atleta"
+                size="lg"
+              />
             </div>
 
             <h2 className="text-lg font-black text-white">{formData.name || 'Atleta'}</h2>
-            <p className="text-xs font-semibold text-emerald-400 uppercase tracking-wider mt-0.5">
+            {formData.nickname && (
+              <span className="inline-block mt-1 px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-bold text-[11px] border border-emerald-500/30">
+                "{formData.nickname}"
+              </span>
+            )}
+            <p className="text-xs font-semibold text-emerald-400 uppercase tracking-wider mt-1.5">
               {formData.mainPosition}
             </p>
 
@@ -252,6 +271,21 @@ export default function ProfilePage() {
             </div>
 
             <div>
+              <label className="block text-xs font-semibold text-slate-300 uppercase mb-1.5">Apelido no Baba</label>
+              <div className="relative">
+                <Smile className="absolute left-3.5 top-2.5 w-4 h-4 text-slate-500" />
+                <input
+                  type="text"
+                  name="nickname"
+                  value={formData.nickname}
+                  onChange={handleChange}
+                  placeholder="Ex: Canhotinha, Romário..."
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-10 pr-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-emerald-500 font-bold"
+                />
+              </div>
+            </div>
+
+            <div>
               <label className="block text-xs font-semibold text-slate-300 uppercase mb-1.5">CPF (Validado)</label>
               <input
                 type="text"
@@ -273,7 +307,7 @@ export default function ProfilePage() {
               />
             </div>
 
-            <div>
+            <div className="sm:col-span-2">
               <label className="block text-xs font-semibold text-slate-300 uppercase mb-1.5">WhatsApp / Telefone</label>
               <input
                 type="text"

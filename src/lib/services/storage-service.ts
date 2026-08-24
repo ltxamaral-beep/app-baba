@@ -151,10 +151,12 @@ export const UserService = {
       const { data: inserted, error: insertError } = await supabase.from('users').insert([{
         id: newUserId,
         name: user.name || 'Atleta Sem Nome',
+        nickname: user.nickname || null,
         email: user.email || `atleta_${Date.now()}@gestaopelada.com`,
         phone: user.phone || '(11) 99999-9999',
         cpf: user.cpf || '000.000.000-00',
         address: user.address || 'Endereço Padrão',
+        avatar_url: user.avatarUrl || null,
         main_position: user.mainPosition || 'meia',
         secondary_position: user.secondaryPosition || null,
         dominant_foot: user.dominantFoot || 'destro',
@@ -228,6 +230,8 @@ export const UserService = {
       try {
         await supabase.from('users').update({
           name: updated.name,
+          nickname: updated.nickname || null,
+          avatar_url: updated.avatarUrl || null,
           phone: updated.phone,
           address: updated.address,
           main_position: updated.mainPosition,

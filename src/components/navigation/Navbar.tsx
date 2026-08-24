@@ -35,6 +35,7 @@ export function Navbar() {
   const [userGroups, setUserGroups] = useState<Array<{ group: Group; member: GroupMember }>>([]);
   const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
   const [currentMember, setCurrentMember] = useState<GroupMember | undefined>(undefined);
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [nextMatchId, setNextMatchId] = useState<string>('match-1');
 
   // Estado da Central de Notificações
@@ -44,6 +45,8 @@ export function Navbar() {
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
 
   const loadNavData = async () => {
+    const user = UserService.getCurrentUser();
+    setCurrentUser(user);
     const groups = GroupService.getUserGroups();
     const activeId = GroupService.getActiveGroupId();
     setUserGroups(groups);
@@ -462,10 +465,20 @@ export function Navbar() {
           <Link
             href="/perfil"
             title="Meu Perfil de Atleta"
-            className="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 border border-slate-800 px-3 py-1.5 rounded-xl text-xs text-slate-200 font-bold transition-colors"
+            className="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 border border-slate-800 px-2.5 py-1.5 rounded-xl text-xs text-slate-200 font-bold transition-colors"
           >
-            <User className="w-4 h-4 text-emerald-400" />
-            <span className="hidden sm:inline">Meu Perfil</span>
+            {currentUser?.avatarUrl ? (
+              <img
+                src={currentUser.avatarUrl}
+                alt={currentUser.name}
+                className="w-5 h-5 rounded-full object-cover border border-emerald-500/60 shadow-sm"
+              />
+            ) : (
+              <User className="w-4 h-4 text-emerald-400" />
+            )}
+            <span className="hidden sm:inline truncate max-w-[120px]">
+              {currentUser?.nickname || currentUser?.name?.split(' ')[0] || 'Meu Perfil'}
+            </span>
           </Link>
         </div>
       </div>

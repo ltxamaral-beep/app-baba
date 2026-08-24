@@ -1,9 +1,12 @@
 import { supabase, isSupabaseConfigured } from '@/lib/supabase/client';
 import { UserService, generateUUID } from '@/lib/services/storage-service';
 import { UserProfile, UserPosition, DominantFoot } from '@/types';
+import { mockUsers } from '@/lib/mock-data';
 
 export interface RegisterAthletePayload {
   name: string;
+  nickname?: string;
+  avatarUrl?: string;
   email: string;
   password?: string;
   phone: string;
@@ -26,6 +29,7 @@ export const AuthService = {
       const mockGoogleUser: UserProfile = {
         id: generateUUID(),
         name: 'Jogador Google',
+        nickname: 'Goleador',
         email: 'jogador.google@gmail.com',
         phone: '(11) 98888-7777',
         cpf: '111.222.333-44',
@@ -66,10 +70,113 @@ export const AuthService = {
   },
 
   /**
-   * Login com Email e Senha
+   * Login exclusivo por CPF e Senha
+   */
+  async signInWithCpf(cpf: string, password?: string): Promise<{ success: boolean; error?: string; user?: UserProfile }> {
+    const cleanCpf = cpf.replace(/\D/g, '');
+
+    if (!cleanCpf || cleanCpf.length < 11) {
+      return { success: false, error: 'Informe um CPF válido com 11 dígitos.' };
+    }
+
+    if (!password) {
+      return { success: false, error: 'Informe sua senha de acesso.' };
+    }
+
+    try {
+      if (isSupabaseConfigured && supabase) {
+        // Busca o usuário no banco pelo CPF
+        const { data: dbUser } = await supabase
+          .from('users')
+          .select('*')
+          .or(`cpf.eq.${cpf},cpf.eq.${cleanCpf}`)
+          .maybeSingle();
+
+        const emailToAuth = dbUser?.email || `cpf_${cleanCpf}@gestaopelada.com`;
+
+        const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+          email: emailToAuth,
+          password: password,
+        });
+
+        if (dbUser) {
+          const profile: UserProfile = {
+            id: dbUser.id,
+            name: dbUser.name,
+            nickname: dbUser.nickname || undefined,
+            email: dbUser.email,
+            phone: dbUser.phone,
+            cpf: dbUser.cpf,
+            address: dbUser.address,
+            avatarUrl: dbUser.avatar_url,
+            mainPosition: dbUser.main_position,
+            secondaryPosition: dbUser.secondary_position,
+            dominantFoot: dbUser.dominant_foot,
+            heightCm: dbUser.height_cm,
+            weightKg: dbUser.weight_kg,
+            overallRating: dbUser.overall_rating || 6.5,
+            createdAt: dbUser.created_at,
+          };
+          UserService.setCurrentUser(profile);
+          return { success: true, user: profile };
+        }
+
+        if (authError && !dbUser) {
+          return { success: false, error: 'CPF ou senha incorretos.' };
+        }
+      }
+
+      // Fallback local caso offline ou cadastrado na sessão / mock
+      const current = UserService.getCurrentUser();
+      const currentCleanCpf = (current?.cpf || '').replace(/\D/g, '');
+
+      if (current && (currentCleanCpf === cleanCpf || !current.cpf)) {
+        current.cpf = cpf;
+        UserService.setCurrentUser(current);
+        return { success: true, user: current };
+      }
+
+      // Busca na lista de mock
+      const foundMock = mockUsers.find(
+        (u) => (u.cpf || '').replace(/\D/g, '') === cleanCpf
+      );
+
+      if (foundMock) {
+        UserService.setCurrentUser(foundMock);
+        return { success: true, user: foundMock };
+      }
+
+      // Cria atleta padrão associado ao CPF
+      const defaultUser: UserProfile = {
+        id: generateUUID(),
+        name: `Atleta ${cleanCpf.slice(-4)}`,
+        nickname: 'Craque',
+        email: `cpf_${cleanCpf}@gestaopelada.com`,
+        phone: '(11) 99999-8888',
+        cpf: cpf,
+        address: 'São Paulo, SP',
+        mainPosition: 'meia',
+        dominantFoot: 'destro',
+        overallRating: 6.5,
+        createdAt: new Date().toISOString(),
+      };
+      UserService.setCurrentUser(defaultUser);
+      return { success: true, user: defaultUser };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Falha ao autenticar com CPF.' };
+    }
+  },
+
+  /**
+   * Login com Email e Senha (Compatibilidade)
    */
   async signInWithEmail(email: string, password?: string): Promise<{ success: boolean; error?: string; user?: UserProfile }> {
     const cleanEmail = email.trim().toLowerCase();
+
+    // Se for CPF passado no campo de email
+    if (/^\d+$/.test(cleanEmail.replace(/\D/g, '')) && !cleanEmail.includes('@')) {
+      return this.signInWithCpf(cleanEmail, password);
+    }
 
     if (!cleanEmail || !cleanEmail.includes('@')) {
       return { success: false, error: 'Informe um e-mail válido' };
@@ -98,6 +205,7 @@ export const AuthService = {
           const profile: UserProfile = {
             id: dbUser.id,
             name: dbUser.name,
+            nickname: dbUser.nickname || undefined,
             email: dbUser.email,
             phone: dbUser.phone,
             cpf: dbUser.cpf,
@@ -131,6 +239,7 @@ export const AuthService = {
       const defaultUser: UserProfile = {
         id: generateUUID(),
         name: cleanEmail.split('@')[0],
+        nickname: 'Craque',
         email: cleanEmail,
         phone: '(11) 99999-8888',
         cpf: '000.000.000-00',
@@ -148,7 +257,7 @@ export const AuthService = {
   },
 
   /**
-   * Cadastro completo de atleta
+   * Cadastro completo de atleta (com foto e apelido)
    */
   async registerAthlete(data: RegisterAthletePayload): Promise<{ success: boolean; error?: string; user?: UserProfile }> {
     try {
@@ -163,8 +272,10 @@ export const AuthService = {
             options: {
               data: {
                 name: data.name,
+                nickname: data.nickname,
                 phone: data.phone,
                 cpf: data.cpf,
+                avatar_url: data.avatarUrl,
               }
             }
           });
@@ -178,10 +289,12 @@ export const AuthService = {
         const { data: inserted, error: insertErr } = await supabase.from('users').insert([{
           id: userId,
           name: data.name,
+          nickname: data.nickname || null,
           email: data.email,
           phone: data.phone,
           cpf: data.cpf,
           address: data.address,
+          avatar_url: data.avatarUrl || null,
           main_position: data.mainPosition || 'meia',
           secondary_position: data.secondaryPosition || null,
           dominant_foot: data.dominantFoot || 'destro',
@@ -194,7 +307,7 @@ export const AuthService = {
           if (insertErr.code === '23505') {
             return { success: false, error: 'E-mail ou CPF já cadastrado no sistema.' };
           }
-          console.warn('Erro ao inserir no Postgres:', insertErr);
+          console.warn('Aviso ao inserir no Postgres:', insertErr);
         } else if (inserted) {
           userId = inserted.id;
         }
@@ -203,10 +316,12 @@ export const AuthService = {
       const profile: UserProfile = {
         id: userId,
         name: data.name,
+        nickname: data.nickname || undefined,
         email: data.email,
         phone: data.phone,
         cpf: data.cpf,
         address: data.address,
+        avatarUrl: data.avatarUrl || undefined,
         mainPosition: data.mainPosition || 'meia',
         secondaryPosition: data.secondaryPosition || undefined,
         dominantFoot: data.dominantFoot || 'destro',
@@ -244,6 +359,7 @@ export const AuthService = {
         const profile: UserProfile = {
           id: dbUser.id,
           name: dbUser.name || authUser.user_metadata?.full_name || 'Atleta',
+          nickname: dbUser.nickname || authUser.user_metadata?.nickname || undefined,
           email: dbUser.email || authUser.email || '',
           phone: dbUser.phone || '',
           cpf: dbUser.cpf || '',
@@ -264,6 +380,7 @@ export const AuthService = {
         const newProfile: UserProfile = {
           id: authUser.id,
           name: authUser.user_metadata?.full_name || authUser.user_metadata?.name || authUser.email?.split('@')[0] || 'Atleta Google',
+          nickname: authUser.user_metadata?.nickname || undefined,
           email: authUser.email || '',
           phone: authUser.user_metadata?.phone || '',
           cpf: '',
@@ -278,6 +395,7 @@ export const AuthService = {
         await supabase.from('users').insert([{
           id: newProfile.id,
           name: newProfile.name,
+          nickname: newProfile.nickname || null,
           email: newProfile.email,
           phone: newProfile.phone || '(00) 00000-0000',
           cpf: `oauth_${Date.now()}`,

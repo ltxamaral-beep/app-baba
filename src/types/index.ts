@@ -33,6 +33,7 @@ export type AttendanceStatus = 'confirmed' | 'waitlist' | 'cancelled' | 'present
 export interface UserProfile {
   id: string;
   name: string;
+  nickname?: string;
   email: string;
   phone: string;
   cpf: string;

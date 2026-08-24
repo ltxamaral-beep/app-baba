@@ -421,12 +421,28 @@ export default function AttendancePage({ params }: { params: { groupId: string; 
                 className="flex items-center justify-between p-3 rounded-xl bg-slate-950/60 border border-slate-800 text-xs"
               >
                 <div className="flex items-center gap-2.5">
-                  <span className="w-6 h-6 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800 flex items-center justify-center font-bold text-[10px]">
+                  <span className="w-6 h-6 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800 flex items-center justify-center font-bold text-[10px] flex-shrink-0">
                     {idx + 1}º
                   </span>
+                  {att.user.avatarUrl ? (
+                    <img
+                      src={att.user.avatarUrl}
+                      alt={att.user.name}
+                      className="w-7 h-7 rounded-full object-cover border border-emerald-500/50 flex-shrink-0"
+                    />
+                  ) : (
+                    <div className="w-7 h-7 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center text-[10px] font-bold text-slate-400 flex-shrink-0">
+                      {att.user.name.charAt(0)}
+                    </div>
+                  )}
                   <div>
                     <p className="font-bold text-white flex items-center gap-1.5 flex-wrap">
                       {att.user.name}
+                      {att.user.nickname && (
+                        <span className="text-[10px] text-emerald-400 font-semibold">
+                          "{att.user.nickname}"
+                        </span>
+                      )}
                       {att.isGuest && (
                         <span className="text-[9px] bg-indigo-500/25 text-indigo-300 border border-indigo-500/40 px-1.5 py-0.2 rounded font-bold">
                           🎟️ Convidado de {att.invitedByName}
@@ -505,11 +521,29 @@ export default function AttendancePage({ params }: { params: { groupId: string; 
                   className="flex items-center justify-between p-3 rounded-xl bg-amber-950/20 border border-amber-800/30 text-xs gap-2"
                 >
                   <div className="flex items-center gap-2.5">
-                    <span className="w-6 h-6 rounded-full bg-amber-950 text-amber-300 border border-amber-800 flex items-center justify-center font-bold text-[10px]">
+                    <span className="w-6 h-6 rounded-full bg-amber-950 text-amber-300 border border-amber-800 flex items-center justify-center font-bold text-[10px] flex-shrink-0">
                       {idx + 1}º
                     </span>
+                    {att.user.avatarUrl ? (
+                      <img
+                        src={att.user.avatarUrl}
+                        alt={att.user.name}
+                        className="w-7 h-7 rounded-full object-cover border border-amber-500/50 flex-shrink-0"
+                      />
+                    ) : (
+                      <div className="w-7 h-7 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center text-[10px] font-bold text-slate-400 flex-shrink-0">
+                        {att.user.name.charAt(0)}
+                      </div>
+                    )}
                     <div>
-                      <p className="font-bold text-amber-200">{att.user.name}</p>
+                      <p className="font-bold text-amber-200 flex items-center gap-1.5 flex-wrap">
+                        {att.user.name}
+                        {att.user.nickname && (
+                          <span className="text-[10px] text-amber-400 font-semibold">
+                            "{att.user.nickname}"
+                          </span>
+                        )}
+                      </p>
                       <p className="text-[11px] text-slate-400 capitalize">
                         {att.user.mainPosition} • Suplente #{idx + 1}
                       </p>

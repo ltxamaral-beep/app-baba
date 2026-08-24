@@ -59,6 +59,7 @@ CREATE TYPE attendance_status AS ENUM ('confirmed', 'waitlist', 'cancelled', 'pr
 CREATE TABLE users (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name VARCHAR(150) NOT NULL,
+    nickname VARCHAR(60),
     email VARCHAR(255) UNIQUE NOT NULL,
     phone VARCHAR(20) NOT NULL,
     cpf VARCHAR(14) UNIQUE NOT NULL,
