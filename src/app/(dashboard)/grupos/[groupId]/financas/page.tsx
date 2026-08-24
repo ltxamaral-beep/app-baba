@@ -9,7 +9,9 @@ import { formatCurrency } from '@/lib/utils/masks';
 import { 
   FinancialTransaction, 
   GroupMember, 
-  TransactionCategory 
+  TransactionCategory,
+  TransactionType,
+  PaymentStatus
 } from '@/types';
 import { showToast } from '@/components/ui/Toast';
 import { 
@@ -34,7 +36,10 @@ import {
   Flame,
   Award,
   History,
-  Archive
+  Archive,
+  Edit3,
+  Trash2,
+  Save
 } from 'lucide-react';
 
 const CATEGORY_LABELS: Record<TransactionCategory, { label: string; icon: string; badgeColor: string }> = {
@@ -63,10 +68,32 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
   const [members, setMembers] = useState<GroupMember[]>([]);
   const [activeFilter, setActiveFilter] = useState<'all' | 'inadimplentes' | 'cartoes' | 'mensalidades' | 'diarias' | 'saldo_inicial' | 'expenses'>('all');
   
-  // Modal de Lançamento
+  // Modal de Criação
   const [modalOpen, setModalOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'mensalidade' | 'lancamento_geral'>('mensalidade');
   const [notification, setNotification] = useState<string | null>(null);
+
+  // Modal de Edição
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [editForm, setEditForm] = useState<{
+    id: string;
+    description: string;
+    category: TransactionCategory;
+    type: TransactionType;
+    amount: number;
+    dueDate: string;
+    status: PaymentStatus;
+    userId: string;
+  }>({
+    id: '',
+    description: '',
+    category: 'mensalidade',
+    type: 'income',
+    amount: 0,
+    dueDate: '',
+    status: 'pending',
+    userId: '',
+  });
 
   // ---------------------------------------------------------------------------
   // 1. Mensalidade (Lote ou Individual com suporte a Meses Antigos / Retroativos)
@@ -128,10 +155,6 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
   const netBalance = totalIncome - totalExpenses;
 
   const delinquentMembers = members.filter((m) => m.isBlockedFinancial);
-  const payingMembersCount = members.filter((m) => {
-    const isGoleiro = m.role === 'goleiro' || m.membershipType === 'goleiro';
-    return !isGoleiro && (m.membershipType === 'associado' || ['presidente', 'adm', 'tesoureiro', 'associado'].includes(m.role));
-  }).length;
 
   const handleSettle = (transactionId: string) => {
     FinanceService.settleTransaction(groupId, transactionId);
@@ -140,6 +163,68 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
     setNotification(msg);
     showToast(msg, 'success');
     setTimeout(() => setNotification(null), 4000);
+  };
+
+  // Abrir Modal de Edição
+  const handleStartEdit = (t: FinancialTransaction) => {
+    setEditForm({
+      id: t.id,
+      description: t.description,
+      category: t.category,
+      type: t.type,
+      amount: t.amount,
+      dueDate: t.dueDate || new Date().toISOString().split('T')[0],
+      status: t.status,
+      userId: t.userId || '',
+    });
+    setEditModalOpen(true);
+  };
+
+  // Salvar Edição
+  const handleSaveEdit = (e: React.FormEvent) => {
+    e.preventDefault();
+    let targetUserName: string | undefined;
+    if (editForm.userId) {
+      const u = members.find((m) => m.userId === editForm.userId);
+      if (u) targetUserName = u.user.name;
+    }
+
+    const updated = FinanceService.updateTransaction(groupId, editForm.id, {
+      description: editForm.description,
+      category: editForm.category,
+      type: editForm.type,
+      amount: editForm.amount,
+      dueDate: editForm.dueDate,
+      status: editForm.status,
+      userId: editForm.userId || undefined,
+      userName: targetUserName,
+    });
+
+    if (updated) {
+      loadData();
+      setEditModalOpen(false);
+      const msg = 'Lançamento financeiro atualizado com sucesso! ✅';
+      setNotification(msg);
+      showToast(msg, 'success');
+      setTimeout(() => setNotification(null), 4000);
+    }
+  };
+
+  // Excluir Lançamento
+  const handleDelete = (t: FinancialTransaction) => {
+    const confirmDelete = window.confirm(
+      `Deseja realmente excluir o lançamento "${t.description}" no valor de ${formatCurrency(t.amount)}?`
+    );
+    if (!confirmDelete) return;
+
+    const ok = FinanceService.deleteTransaction(groupId, t.id);
+    if (ok) {
+      loadData();
+      const msg = 'Lançamento excluído do extrato financeiro. 🗑️';
+      setNotification(msg);
+      showToast(msg, 'info');
+      setTimeout(() => setNotification(null), 4000);
+    }
   };
 
   // 1. Submit Mensalidades (Lote ou Individual / Retroativa)
@@ -295,8 +380,6 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
         </div>
       </div>
 
-
-
       {/* Alerta / Notificação */}
       {notification && (
         <div className="bg-emerald-950/80 border border-emerald-600 text-emerald-300 p-4 rounded-2xl text-xs flex items-center gap-3 font-semibold shadow-lg">
@@ -422,7 +505,7 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
                 <th className="pb-3 font-semibold">Data / Vencimento</th>
                 <th className="pb-3 font-semibold">Valor</th>
                 <th className="pb-3 font-semibold">Status</th>
-                <th className="pb-3 font-semibold text-right">Ação</th>
+                <th className="pb-3 font-semibold text-right">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/50">
@@ -442,7 +525,7 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
                   const catInfo = CATEGORY_LABELS[t.category] || CATEGORY_LABELS.outros;
 
                   return (
-                    <tr key={t.id} className="hover:bg-slate-800/20 transition-colors">
+                    <tr key={t.id} className="hover:bg-slate-800/20 transition-colors group">
                       <td className="py-3 font-medium text-slate-200">
                         {t.description}
                         {t.userName && <span className="block text-[10px] text-slate-500 font-semibold">{t.userName}</span>}
@@ -472,14 +555,33 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
                         )}
                       </td>
                       <td className="py-3 text-right">
-                        {!isPaid && (
+                        <div className="flex items-center justify-end gap-1.5">
+                          {!isPaid && (
+                            <button
+                              onClick={() => handleSettle(t.id)}
+                              className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold px-2 py-1 rounded text-[10px] transition-colors shadow-sm inline-flex items-center gap-1"
+                              title="Dar baixa / Quitar"
+                            >
+                              <CheckCircle2 className="w-3 h-3" /> Baixar
+                            </button>
+                          )}
+
                           <button
-                            onClick={() => handleSettle(t.id)}
-                            className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold px-2.5 py-1 rounded text-[11px] transition-colors shadow-sm"
+                            onClick={() => handleStartEdit(t)}
+                            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-[#00b49f] transition-all border border-slate-700/80"
+                            title="Editar lançamento"
                           >
-                            Dar Baixa
+                            <Edit3 className="w-3.5 h-3.5" />
                           </button>
-                        )}
+
+                          <button
+                            onClick={() => handleDelete(t)}
+                            className="p-1.5 rounded-lg bg-rose-950/30 hover:bg-rose-900/60 text-rose-400 hover:text-rose-200 transition-all border border-rose-900/50"
+                            title="Excluir lançamento"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -496,7 +598,7 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
       </div>
 
       {/* ========================================================================= */}
-      {/* MODAL DE LANÇAMENTOS FINANCEIROS & MIGRAÇÃO */}
+      {/* MODAL DE CRIAÇÃO DE LANÇAMENTOS FINANCEIROS */}
       {/* ========================================================================= */}
       {modalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
@@ -537,9 +639,7 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
               </button>
             </div>
 
-            {/* ========================================================================= */}
-            {/* ABA 1: MENSALIDADES (ATUAIS E RETROATIVAS / LOTE OU INDIVIDUAL) */}
-            {/* ========================================================================= */}
+            {/* ABA 1: MENSALIDADES */}
             {activeTab === 'mensalidade' && (
               <form onSubmit={handleSubmitMonthly} className="space-y-4">
                 <div className="bg-indigo-950/30 border border-indigo-500/30 p-3.5 rounded-xl text-xs text-indigo-200 space-y-1.5">
@@ -656,7 +756,6 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
                   />
                 </div>
 
-                {/* Status: Já Pago no Passado ou Cobrança Pendente */}
                 <div className="bg-slate-950/70 border border-slate-800 p-3 rounded-xl space-y-2">
                   <div className="flex items-center gap-2">
                     <input
@@ -689,12 +788,9 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
               </form>
             )}
 
-            {/* ========================================================================= */}
-            {/* ABA 2: LANÇAMENTO UNIVERSAL DE RECEITAS & DESPESAS COM TODAS AS CATEGORIAS */}
-            {/* ========================================================================= */}
+            {/* ABA 2: LANÇAMENTO UNIVERSAL */}
             {activeTab === 'lancamento_geral' && (
               <form onSubmit={handleSubmitCustom} className="space-y-4">
-                {/* Tipo: Receita ou Despesa */}
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 uppercase mb-1.5">
                     Tipo do Lançamento
@@ -715,7 +811,7 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
                           : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
                       }`}
                     >
-                      <TrendingUp className="w-4 h-4" /> 🟢 Receita (Entrada no Caixa)
+                      <TrendingUp className="w-4 h-4" /> 🟢 Receita (Entrada)
                     </button>
                     <button
                       type="button"
@@ -732,12 +828,11 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
                           : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
                       }`}
                     >
-                      <TrendingDown className="w-4 h-4" /> 🔴 Despesa (Saída do Caixa)
+                      <TrendingDown className="w-4 h-4" /> 🔴 Despesa (Saída)
                     </button>
                   </div>
                 </div>
 
-                {/* Dropdown de Categorias */}
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 uppercase mb-1.5">
                     Categoria
@@ -796,7 +891,6 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
                   </select>
                 </div>
 
-                {/* Atleta Vinculado Opcional */}
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 uppercase mb-1.5">
                     Atleta Vinculado (Opcional)
@@ -817,7 +911,6 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
                   </select>
                 </div>
 
-                {/* Descrição */}
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 uppercase mb-1.5">
                     Descrição do Lançamento
@@ -832,7 +925,6 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
                   />
                 </div>
 
-                {/* Valor & Data */}
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-semibold text-slate-300 uppercase mb-1.5">
@@ -862,7 +954,6 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
                   </div>
                 </div>
 
-                {/* Status: Já Pago ou Pendente */}
                 <div className="flex items-center gap-2 pt-1">
                   <input
                     type="checkbox"
@@ -872,7 +963,7 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
                     className="w-4 h-4 rounded bg-slate-950 border-slate-800 text-emerald-500 focus:ring-0 cursor-pointer"
                   />
                   <label htmlFor="customPaid" className="text-xs text-slate-300 font-medium cursor-pointer">
-                    Lançamento já está <strong>PAGO / EFETIVADO</strong> (movimenta o saldo do caixa imediatamente)
+                    Lançamento já está <strong>PAGO / EFETIVADO</strong> (movimenta o caixa imediatamente)
                   </label>
                 </div>
 
@@ -889,6 +980,212 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
                 </button>
               </form>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL DE EDIÇÃO DE LANÇAMENTO */}
+      {/* ========================================================================= */}
+      {editModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <Edit3 className="w-4 h-4 text-[#00b49f]" /> Editar Lançamento Financeiro
+              </h3>
+              <button onClick={() => setEditModalOpen(false)} className="text-slate-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEdit} className="space-y-4">
+              {/* Tipo */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 uppercase mb-1.5">
+                  Tipo do Lançamento
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditForm((prev) => ({ ...prev, type: 'income' }))}
+                    className={`p-2.5 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 transition-all ${
+                      editForm.type === 'income'
+                        ? 'bg-emerald-500 text-slate-950 border-emerald-400 shadow'
+                        : 'bg-slate-950 border-slate-800 text-slate-400'
+                    }`}
+                  >
+                    <TrendingUp className="w-4 h-4" /> 🟢 Receita (Entrada)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditForm((prev) => ({ ...prev, type: 'expense' }))}
+                    className={`p-2.5 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 transition-all ${
+                      editForm.type === 'expense'
+                        ? 'bg-rose-500 text-white border-rose-400 shadow'
+                        : 'bg-slate-950 border-slate-800 text-slate-400'
+                    }`}
+                  >
+                    <TrendingDown className="w-4 h-4" /> 🔴 Despesa (Saída)
+                  </button>
+                </div>
+              </div>
+
+              {/* Categoria */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 uppercase mb-1.5">
+                  Categoria
+                </label>
+                <select
+                  value={editForm.category}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, category: e.target.value as TransactionCategory }))}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-emerald-500 font-semibold"
+                >
+                  <option value="saldo_inicial">🏦 Saldo Inicial / Ajuste de Migração</option>
+                  <option value="mensalidade">⭐ Mensalidade</option>
+                  <option value="diaria">🎟️ Diária de Jogo</option>
+                  <option value="cartao_azul">🟦 Multa Cartão Azul</option>
+                  <option value="cartao_vermelho">🟥 Multa Cartão Vermelho</option>
+                  <option value="cartao_amarelo">🟨 Multa Cartão Amarelo</option>
+                  <option value="multa_falta">⏳ Multa Falta sem Aviso</option>
+                  <option value="multa_atraso">⏰ Multa por Atraso</option>
+                  <option value="uniforme">👕 Uniforme / Coletes</option>
+                  <option value="patrocinio">🤝 Patrocínio / Doação</option>
+                  <option value="aluguel_campo">🏟️ Aluguel Quadra / Campo</option>
+                  <option value="ajuda_custo_goleiro">🧤 Pagamento Goleiro</option>
+                  <option value="arbitragem">⚖️ Arbitragem / Juiz</option>
+                  <option value="agua_gelo">💧 Água / Gelo / Bebidas</option>
+                  <option value="material">⚽ Bolas / Equipamentos</option>
+                  <option value="churrasco">🍖 Churrasco / Resenha</option>
+                  <option value="outros">📦 Outros</option>
+                </select>
+              </div>
+
+              {/* Descrição */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 uppercase mb-1.5">
+                  Descrição
+                </label>
+                <input
+                  type="text"
+                  value={editForm.description}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, description: e.target.value }))}
+                  required
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-emerald-500 font-semibold"
+                />
+              </div>
+
+              {/* Atleta Vinculado */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 uppercase mb-1.5">
+                  Atleta Vinculado (Opcional)
+                </label>
+                <select
+                  value={editForm.userId}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, userId: e.target.value }))}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                >
+                  <option value="">-- Sem atleta específico / Geral da Pelada --</option>
+                  {members
+                    .filter((m) => m.status !== 'pending_approval')
+                    .map((m) => (
+                      <option key={m.id} value={m.userId}>
+                        {m.user.name} ({m.role.toUpperCase()})
+                      </option>
+                    ))}
+                </select>
+              </div>
+
+              {/* Valor & Data */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 uppercase mb-1.5">
+                    Valor (R$)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.50"
+                    value={editForm.amount}
+                    onChange={(e) => setEditForm((prev) => ({ ...prev, amount: parseFloat(e.target.value) || 0 }))}
+                    required
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-emerald-500 font-bold text-emerald-400"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 uppercase mb-1.5">
+                    Data / Vencimento
+                  </label>
+                  <input
+                    type="date"
+                    value={editForm.dueDate}
+                    onChange={(e) => setEditForm((prev) => ({ ...prev, dueDate: e.target.value }))}
+                    required
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+              </div>
+
+              {/* Status */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 uppercase mb-1.5">
+                  Status do Pagamento
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditForm((prev) => ({ ...prev, status: 'paid' }))}
+                    className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all ${
+                      editForm.status === 'paid'
+                        ? 'bg-emerald-500 text-slate-950 border-emerald-400 font-black shadow'
+                        : 'bg-slate-950 border-slate-800 text-slate-400'
+                    }`}
+                  >
+                    ✓ Pago
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setEditForm((prev) => ({ ...prev, status: 'pending' }))}
+                    className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all ${
+                      editForm.status === 'pending'
+                        ? 'bg-amber-500 text-slate-950 border-amber-400 font-black shadow'
+                        : 'bg-slate-950 border-slate-800 text-slate-400'
+                    }`}
+                  >
+                    ⏳ Pendente
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setEditForm((prev) => ({ ...prev, status: 'overdue' }))}
+                    className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all ${
+                      editForm.status === 'overdue'
+                        ? 'bg-rose-500 text-white border-rose-400 font-black shadow'
+                        : 'bg-slate-950 border-slate-800 text-slate-400'
+                    }`}
+                  >
+                    ⚠️ Em Atraso
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex gap-2.5 pt-2 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setEditModalOpen(false)}
+                  className="w-1/3 bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 font-bold py-2.5 px-4 rounded-xl text-xs transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="w-2/3 bg-[#00b49f] hover:bg-[#00cba9] text-slate-950 font-black py-2.5 px-4 rounded-xl text-xs flex items-center justify-center gap-2 shadow-lg transition-all"
+                >
+                  <Save className="w-4 h-4" /> Salvar Alterações
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

@@ -2115,6 +2115,77 @@ export const FinanceService = {
         setStored(`members_${groupId}`, updatedMembers);
       }
     }
+  },
+
+  updateTransaction(groupId: string, transactionId: string, patch: Partial<FinancialTransaction>): FinancialTransaction | null {
+    const transactions = this.getTransactions(groupId);
+    let targetUserId: string | undefined;
+    let updatedTrans: FinancialTransaction | null = null;
+
+    const updated = transactions.map((t) => {
+      if (t.id === transactionId) {
+        updatedTrans = {
+          ...t,
+          ...patch,
+          amount: patch.amount !== undefined ? Number(patch.amount) : t.amount,
+          paidAt: patch.status === 'paid' ? (patch.paidAt || t.paidAt || new Date().toISOString()) : undefined,
+        };
+        targetUserId = updatedTrans.userId || t.userId;
+        return updatedTrans;
+      }
+      return t;
+    });
+
+    if (!updatedTrans) return null;
+
+    setStored(`transactions_${groupId}`, updated);
+
+    if (targetUserId) {
+      const remainingDebts = updated.some(
+        (t) => t.userId === targetUserId && (t.status === 'overdue' || t.status === 'pending')
+      );
+      const members = GroupService.getMembers(groupId);
+      const updatedMembers = members.map((m) =>
+        m.userId === targetUserId 
+          ? { 
+              ...m, 
+              isBlockedFinancial: remainingDebts, 
+              blockedReason: remainingDebts ? (m.blockedReason || 'Débito pendente em aberto') : undefined 
+            } 
+          : m
+      );
+      setStored(`members_${groupId}`, updatedMembers);
+    }
+
+    return updatedTrans;
+  },
+
+  deleteTransaction(groupId: string, transactionId: string): boolean {
+    const transactions = this.getTransactions(groupId);
+    const target = transactions.find((t) => t.id === transactionId);
+    if (!target) return false;
+
+    const filtered = transactions.filter((t) => t.id !== transactionId);
+    setStored(`transactions_${groupId}`, filtered);
+
+    if (target.userId) {
+      const remainingDebts = filtered.some(
+        (t) => t.userId === target.userId && (t.status === 'overdue' || t.status === 'pending')
+      );
+      const members = GroupService.getMembers(groupId);
+      const updatedMembers = members.map((m) =>
+        m.userId === target.userId 
+          ? { 
+              ...m, 
+              isBlockedFinancial: remainingDebts, 
+              blockedReason: remainingDebts ? (m.blockedReason || 'Débito pendente em aberto') : undefined 
+            } 
+          : m
+      );
+      setStored(`members_${groupId}`, updatedMembers);
+    }
+
+    return true;
   }
 };
 
