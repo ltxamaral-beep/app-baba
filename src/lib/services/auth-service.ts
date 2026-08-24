@@ -106,22 +106,29 @@ export const AuthService = {
         });
 
         if (dbUser) {
+          const currentLocal = UserService.getCurrentUser();
           const profile: UserProfile = {
             id: dbUser.id,
-            name: dbUser.name,
-            nickname: dbUser.nickname || undefined,
-            email: dbUser.email,
-            phone: dbUser.phone,
-            cpf: dbUser.cpf,
-            address: dbUser.address,
-            avatarUrl: dbUser.avatar_url,
-            mainPosition: dbUser.main_position,
-            secondaryPosition: dbUser.secondary_position,
-            dominantFoot: dbUser.dominant_foot,
-            heightCm: dbUser.height_cm,
-            weightKg: dbUser.weight_kg,
-            overallRating: dbUser.overall_rating || 6.5,
-            createdAt: dbUser.created_at,
+            name: dbUser.name || currentLocal.name,
+            nickname: dbUser.nickname || currentLocal.nickname || undefined,
+            email: dbUser.email || currentLocal.email,
+            phone: dbUser.phone || currentLocal.phone,
+            cpf: dbUser.cpf || currentLocal.cpf,
+            cep: dbUser.cep || currentLocal.cep || undefined,
+            street: dbUser.street || currentLocal.street || undefined,
+            number: dbUser.number || currentLocal.number || undefined,
+            neighborhood: dbUser.neighborhood || currentLocal.neighborhood || undefined,
+            city: dbUser.city || currentLocal.city || undefined,
+            state: dbUser.state || currentLocal.state || undefined,
+            address: dbUser.address || currentLocal.address,
+            avatarUrl: dbUser.avatar_url || currentLocal.avatarUrl,
+            mainPosition: dbUser.main_position || currentLocal.mainPosition,
+            secondaryPosition: dbUser.secondary_position || currentLocal.secondaryPosition,
+            dominantFoot: dbUser.dominant_foot || currentLocal.dominantFoot,
+            heightCm: dbUser.height_cm || currentLocal.heightCm,
+            weightKg: dbUser.weight_kg || currentLocal.weightKg,
+            overallRating: dbUser.overall_rating || currentLocal.overallRating || 6.5,
+            createdAt: dbUser.created_at || currentLocal.createdAt,
           };
           UserService.setCurrentUser(profile);
           return { success: true, user: profile };
@@ -208,22 +215,29 @@ export const AuthService = {
           .maybeSingle();
 
         if (dbUser) {
+          const currentLocal = UserService.getCurrentUser();
           const profile: UserProfile = {
             id: dbUser.id,
-            name: dbUser.name,
-            nickname: dbUser.nickname || undefined,
-            email: dbUser.email,
-            phone: dbUser.phone,
-            cpf: dbUser.cpf,
-            address: dbUser.address,
-            avatarUrl: dbUser.avatar_url,
-            mainPosition: dbUser.main_position,
-            secondaryPosition: dbUser.secondary_position,
-            dominantFoot: dbUser.dominant_foot,
-            heightCm: dbUser.height_cm,
-            weightKg: dbUser.weight_kg,
-            overallRating: dbUser.overall_rating || 6.5,
-            createdAt: dbUser.created_at,
+            name: dbUser.name || currentLocal.name,
+            nickname: dbUser.nickname || currentLocal.nickname || undefined,
+            email: dbUser.email || currentLocal.email,
+            phone: dbUser.phone || currentLocal.phone,
+            cpf: dbUser.cpf || currentLocal.cpf,
+            cep: dbUser.cep || currentLocal.cep || undefined,
+            street: dbUser.street || currentLocal.street || undefined,
+            number: dbUser.number || currentLocal.number || undefined,
+            neighborhood: dbUser.neighborhood || currentLocal.neighborhood || undefined,
+            city: dbUser.city || currentLocal.city || undefined,
+            state: dbUser.state || currentLocal.state || undefined,
+            address: dbUser.address || currentLocal.address,
+            avatarUrl: dbUser.avatar_url || currentLocal.avatarUrl,
+            mainPosition: dbUser.main_position || currentLocal.mainPosition,
+            secondaryPosition: dbUser.secondary_position || currentLocal.secondaryPosition,
+            dominantFoot: dbUser.dominant_foot || currentLocal.dominantFoot,
+            heightCm: dbUser.height_cm || currentLocal.heightCm,
+            weightKg: dbUser.weight_kg || currentLocal.weightKg,
+            overallRating: dbUser.overall_rating || currentLocal.overallRating || 6.5,
+            createdAt: dbUser.created_at || currentLocal.createdAt,
           };
           UserService.setCurrentUser(profile);
           return { success: true, user: profile };
@@ -368,22 +382,29 @@ export const AuthService = {
         .maybeSingle();
 
       if (dbUser) {
+        const currentLocal = UserService.getCurrentUser();
         const profile: UserProfile = {
           id: dbUser.id,
-          name: dbUser.name || authUser.user_metadata?.full_name || 'Atleta',
-          nickname: dbUser.nickname || authUser.user_metadata?.nickname || undefined,
-          email: dbUser.email || authUser.email || '',
-          phone: dbUser.phone || '',
-          cpf: dbUser.cpf || '',
-          address: dbUser.address || '',
-          avatarUrl: dbUser.avatar_url || authUser.user_metadata?.avatar_url,
-          mainPosition: dbUser.main_position || 'meia',
-          secondaryPosition: dbUser.secondary_position,
-          dominantFoot: dbUser.dominant_foot || 'destro',
-          heightCm: dbUser.height_cm,
-          weightKg: dbUser.weight_kg,
-          overallRating: dbUser.overall_rating || 6.5,
-          createdAt: dbUser.created_at,
+          name: dbUser.name || currentLocal.name || authUser.user_metadata?.full_name || 'Atleta',
+          nickname: dbUser.nickname || currentLocal.nickname || authUser.user_metadata?.nickname || undefined,
+          email: dbUser.email || currentLocal.email || authUser.email || '',
+          phone: dbUser.phone || currentLocal.phone || '',
+          cpf: dbUser.cpf || currentLocal.cpf || '',
+          cep: dbUser.cep || currentLocal.cep || undefined,
+          street: dbUser.street || currentLocal.street || undefined,
+          number: dbUser.number || currentLocal.number || undefined,
+          neighborhood: dbUser.neighborhood || currentLocal.neighborhood || undefined,
+          city: dbUser.city || currentLocal.city || undefined,
+          state: dbUser.state || currentLocal.state || undefined,
+          address: dbUser.address || currentLocal.address || '',
+          avatarUrl: dbUser.avatar_url || currentLocal.avatarUrl || authUser.user_metadata?.avatar_url,
+          mainPosition: dbUser.main_position || currentLocal.mainPosition || 'meia',
+          secondaryPosition: dbUser.secondary_position || currentLocal.secondaryPosition,
+          dominantFoot: dbUser.dominant_foot || currentLocal.dominantFoot || 'destro',
+          heightCm: dbUser.height_cm || currentLocal.heightCm,
+          weightKg: dbUser.weight_kg || currentLocal.weightKg,
+          overallRating: dbUser.overall_rating || currentLocal.overallRating || 6.5,
+          createdAt: dbUser.created_at || currentLocal.createdAt,
         };
         UserService.setCurrentUser(profile);
         return profile;
