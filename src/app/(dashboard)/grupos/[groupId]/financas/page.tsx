@@ -132,7 +132,7 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
 
   const [currentMember, setCurrentMember] = useState<GroupMember | undefined>(undefined);
 
-  const loadData = () => {
+  const loadData = async () => {
     const tList = FinanceService.getTransactions(groupId);
     const mList = GroupService.getMembers(groupId);
     const member = GroupService.getMemberInGroup(groupId);
@@ -145,10 +145,21 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
     if (activeM) {
       setSingleMonthlyUserId(activeM.userId);
     }
+
+    try {
+      const cloudTrans = await FinanceService.syncTransactionsFromCloud(groupId);
+      if (cloudTrans) {
+        setTransactions(cloudTrans);
+      }
+    } catch (e) {
+      console.warn('Erro ao sincronizar transações com nuvem:', e);
+    }
   };
 
   useEffect(() => {
     loadData();
+    const interval = setInterval(loadData, 5000);
+    return () => clearInterval(interval);
   }, [groupId]);
 
   const isDirector = currentMember?.role === 'presidente' || currentMember?.role === 'adm' || currentMember?.role === 'tesoureiro';

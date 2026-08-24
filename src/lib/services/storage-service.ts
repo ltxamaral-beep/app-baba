@@ -2144,16 +2144,89 @@ export const FinanceService = {
     return getStored<FinancialTransaction[]>(`transactions_${groupId}`, []);
   },
 
+  async syncTransactionsFromCloud(groupId: string): Promise<FinancialTransaction[]> {
+    const local = this.getTransactions(groupId);
+    if (!isSupabaseConfigured || !supabase || !groupId) return local;
+
+    try {
+      const { data, error } = await supabase
+        .from('financial_transactions')
+        .select('*')
+        .eq('group_id', groupId)
+        .order('created_at', { ascending: false });
+
+      if (error || !data) return local;
+
+      const remoteTrans: FinancialTransaction[] = data.map((t: any) => ({
+        id: t.id,
+        groupId: t.group_id,
+        userId: t.user_id || undefined,
+        userName: t.userName || undefined,
+        type: t.type,
+        category: t.category,
+        description: t.description,
+        amount: Number(t.amount) || 0,
+        dueDate: t.due_date,
+        paidAt: t.paid_at || undefined,
+        status: t.status,
+        recordedBy: t.recorded_by || '00000000-0000-4000-8000-000000000001',
+        createdAt: t.created_at || new Date().toISOString(),
+      }));
+
+      const map = new Map<string, FinancialTransaction>();
+      remoteTrans.forEach((t) => map.set(t.id, t));
+      local.forEach((t) => {
+        if (!map.has(t.id)) map.set(t.id, t);
+      });
+
+      const merged = Array.from(map.values()).sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
+
+      setStored(`transactions_${groupId}`, merged);
+      return merged;
+    } catch (err) {
+      console.warn('Erro ao sincronizar transações do Supabase:', err);
+      return local;
+    }
+  },
+
   createTransaction(groupId: string, data: Omit<FinancialTransaction, 'id' | 'createdAt' | 'groupId'>): FinancialTransaction {
     const transactions = this.getTransactions(groupId);
+    const newId = generateUUID();
     const newTrans: FinancialTransaction = {
       ...data,
-      id: generateUUID(),
+      id: newId,
       groupId,
       createdAt: new Date().toISOString(),
     };
     transactions.unshift(newTrans);
     setStored(`transactions_${groupId}`, transactions);
+
+    // Sincroniza com o Supabase
+    if (isSupabaseConfigured && supabase) {
+      (async () => {
+        try {
+          await supabase.from('financial_transactions').upsert([{
+            id: newId,
+            group_id: groupId,
+            user_id: isValidUUID(data.userId || '') ? data.userId : null,
+            userName: data.userName || null,
+            type: data.type,
+            category: data.category,
+            description: data.description,
+            amount: data.amount,
+            due_date: data.dueDate,
+            paid_at: data.paidAt || null,
+            status: data.status,
+            recorded_by: isValidUUID(data.recordedBy) ? data.recordedBy : '00000000-0000-4000-8000-000000000001',
+          }]);
+        } catch (err) {
+          console.warn('Erro ao salvar transação no Supabase:', err);
+        }
+      })();
+    }
+
     return newTrans;
   },
 
@@ -2182,9 +2255,7 @@ export const FinanceService = {
       );
 
       if (!alreadyExists) {
-        const newTrans: FinancialTransaction = {
-          id: generateUUID(),
-          groupId,
+        const newTrans = this.createTransaction(groupId, {
           userId: member.userId,
           userName: member.user.name,
           type: 'income',
@@ -2195,14 +2266,27 @@ export const FinanceService = {
           status: isPaid ? 'paid' : 'pending',
           paidAt: isPaid ? new Date().toISOString() : undefined,
           recordedBy,
-          createdAt: new Date().toISOString(),
-        };
-        transactions.unshift(newTrans);
+        });
         createdList.push(newTrans);
       }
     });
 
-    setStored(`transactions_${groupId}`, transactions);
+    // Dispara notificação financeira
+    try {
+      NotificationService.addNotification(groupId, {
+        type: 'financial_alert',
+        title: 'Mensalidades Geradas em Lote ⭐',
+        message: `A cobrança de mensalidade de ${monthRef} (R$ ${amount.toFixed(2).replace('.', ',')}) foi lançada para ${createdList.length} associados (${isPaid ? 'Registrado como Pago' : 'Pendente de Pagamento'}).`,
+        data: {
+          category: 'mensalidade',
+          amount,
+          count: createdList.length,
+        }
+      });
+    } catch (e) {
+      console.warn('Erro ao disparar notificação financeira:', e);
+    }
+
     return { generatedCount: createdList.length, transactions: createdList };
   },
 
@@ -2217,7 +2301,7 @@ export const FinanceService = {
     recordedBy: string = '00000000-0000-4000-8000-000000000001'
   ): FinancialTransaction {
     const description = `Mensalidade ${monthRef} (${userName})`;
-    return this.createTransaction(groupId, {
+    const trans = this.createTransaction(groupId, {
       userId,
       userName,
       type: 'income',
@@ -2229,6 +2313,27 @@ export const FinanceService = {
       paidAt: isPaid ? new Date().toISOString() : undefined,
       recordedBy,
     });
+
+    // Dispara notificação imediata para o atleta e para o grupo
+    try {
+      NotificationService.addNotification(groupId, {
+        type: 'financial_alert',
+        title: isPaid ? 'Mensalidade Registrada como Paga ✅' : 'Cobrança de Mensalidade 💳',
+        message: isPaid 
+          ? `Mensalidade de ${monthRef} (${userName}) no valor de R$ ${amount.toFixed(2).replace('.', ',')} foi confirmada no caixa.`
+          : `Mensalidade de ${monthRef} lançada para ${userName} no valor de R$ ${amount.toFixed(2).replace('.', ',')}. Vencimento: ${dueDate}.`,
+        data: {
+          userId,
+          userName,
+          amount,
+          category: 'mensalidade',
+        }
+      });
+    } catch (e) {
+      console.warn('Erro ao disparar notificação:', e);
+    }
+
+    return trans;
   },
 
   generateDailyFee(
@@ -2239,7 +2344,7 @@ export const FinanceService = {
     amount: number, 
     recordedBy: string = '00000000-0000-4000-8000-000000000001'
   ): FinancialTransaction {
-    return this.createTransaction(groupId, {
+    const trans = this.createTransaction(groupId, {
       userId,
       userName,
       type: 'income',
@@ -2250,6 +2355,24 @@ export const FinanceService = {
       status: 'pending',
       recordedBy,
     });
+
+    try {
+      NotificationService.addNotification(groupId, {
+        type: 'financial_alert',
+        title: 'Cobrança de Diária de Pelada 🎟️',
+        message: `Diária da pelada de ${matchDate} no valor de R$ ${amount.toFixed(2).replace('.', ',')} lançada para ${userName}.`,
+        data: {
+          userId,
+          userName,
+          amount,
+          category: 'diaria',
+        }
+      });
+    } catch (e) {
+      console.warn('Erro ao disparar notificação:', e);
+    }
+
+    return trans;
   },
 
   generateCardFine(
@@ -2271,7 +2394,7 @@ export const FinanceService = {
       multa_falta: 'Multa - Falta sem Aviso ⏳',
     };
     const title = description || `${defaultLabels[cardType]} (${userName} - ${matchDate})`;
-    return this.createTransaction(groupId, {
+    const trans = this.createTransaction(groupId, {
       userId,
       userName,
       type: 'income',
@@ -2283,6 +2406,24 @@ export const FinanceService = {
       paidAt: isPaid ? new Date().toISOString() : undefined,
       recordedBy,
     });
+
+    try {
+      NotificationService.addNotification(groupId, {
+        type: 'financial_alert',
+        title: defaultLabels[cardType] || 'Multa Disciplinar ⚠️',
+        message: `Multa de R$ ${amount.toFixed(2).replace('.', ',')} lançada para ${userName} (${title}).`,
+        data: {
+          userId,
+          userName,
+          amount,
+          category: cardType,
+        }
+      });
+    } catch (e) {
+      console.warn('Erro ao disparar notificação:', e);
+    }
+
+    return trans;
   },
 
   generateCustomIncome(
@@ -2296,7 +2437,7 @@ export const FinanceService = {
     isPaid: boolean = true,
     recordedBy: string = '00000000-0000-4000-8000-000000000001'
   ): FinancialTransaction {
-    return this.createTransaction(groupId, {
+    const trans = this.createTransaction(groupId, {
       userId,
       userName,
       type: 'income',
@@ -2308,6 +2449,24 @@ export const FinanceService = {
       paidAt: isPaid ? new Date().toISOString() : undefined,
       recordedBy,
     });
+
+    try {
+      NotificationService.addNotification(groupId, {
+        type: 'financial_alert',
+        title: 'Entrada Financeira Registrada 🟢',
+        message: `Receita de R$ ${amount.toFixed(2).replace('.', ',')} (${description}) registrada no caixa.`,
+        data: {
+          userId,
+          userName,
+          amount,
+          category,
+        }
+      });
+    } catch (e) {
+      console.warn('Erro ao disparar notificação:', e);
+    }
+
+    return trans;
   },
 
   createExpense(
@@ -2338,16 +2497,35 @@ export const FinanceService = {
   settleTransaction(groupId: string, transactionId: string): void {
     const transactions = this.getTransactions(groupId);
     let settledUserId: string | undefined;
+    let settledUserName: string | undefined;
+    let settledDesc: string = '';
+    let settledAmount: number = 0;
 
     const updated = transactions.map((t) => {
       if (t.id === transactionId) {
         settledUserId = t.userId;
+        settledUserName = t.userName;
+        settledDesc = t.description;
+        settledAmount = t.amount;
         return { ...t, status: 'paid' as any, paidAt: new Date().toISOString() };
       }
       return t;
     });
 
     setStored(`transactions_${groupId}`, updated);
+
+    if (isSupabaseConfigured && supabase) {
+      (async () => {
+        try {
+          await supabase.from('financial_transactions').update({
+            status: 'paid',
+            paid_at: new Date().toISOString(),
+          }).eq('id', transactionId);
+        } catch (err) {
+          console.warn('Erro ao dar baixa no Supabase:', err);
+        }
+      })();
+    }
 
     if (settledUserId) {
       const remainingDebts = updated.some(
@@ -2360,6 +2538,22 @@ export const FinanceService = {
         );
         setStored(`members_${groupId}`, updatedMembers);
       }
+    }
+
+    // Dispara notificação de quitação
+    try {
+      NotificationService.addNotification(groupId, {
+        type: 'financial_alert',
+        title: 'Pagamento Confirmado & Baixa Realizada ✅',
+        message: `O pagamento de ${settledUserName || 'atleta'} (R$ ${settledAmount.toFixed(2).replace('.', ',')} - ${settledDesc}) foi registrado e baixado no caixa.`,
+        data: {
+          userId: settledUserId,
+          userName: settledUserName,
+          amount: settledAmount,
+        }
+      });
+    } catch (e) {
+      console.warn('Erro ao disparar notificação de baixa:', e);
     }
   },
 
@@ -2385,6 +2579,22 @@ export const FinanceService = {
     if (!updatedTrans) return null;
 
     setStored(`transactions_${groupId}`, updated);
+
+    if (isSupabaseConfigured && supabase) {
+      (async () => {
+        try {
+          await supabase.from('financial_transactions').update({
+            description: patch.description,
+            amount: patch.amount,
+            due_date: patch.dueDate,
+            status: patch.status,
+            paid_at: patch.status === 'paid' ? new Date().toISOString() : null,
+          }).eq('id', transactionId);
+        } catch (err) {
+          console.warn('Erro ao atualizar transação no Supabase:', err);
+        }
+      })();
+    }
 
     if (targetUserId) {
       const remainingDebts = updated.some(
@@ -2413,6 +2623,16 @@ export const FinanceService = {
 
     const filtered = transactions.filter((t) => t.id !== transactionId);
     setStored(`transactions_${groupId}`, filtered);
+
+    if (isSupabaseConfigured && supabase) {
+      (async () => {
+        try {
+          await supabase.from('financial_transactions').delete().eq('id', transactionId);
+        } catch (err) {
+          console.warn('Erro ao excluir transação no Supabase:', err);
+        }
+      })();
+    }
 
     if (target.userId) {
       const remainingDebts = filtered.some(
