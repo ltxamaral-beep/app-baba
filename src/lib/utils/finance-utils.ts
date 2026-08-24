@@ -1,0 +1,69 @@
+import { FinancialTransaction } from '@/types';
+
+export const MONTH_NAMES = [
+  'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+  'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
+];
+
+export type FinancePeriodType = 'all' | 'monthly' | 'yearly';
+
+/**
+ * Filtra transação financeira pelo período selecionado (Geral, Mensal ou Anual)
+ */
+export function matchTransactionPeriod(
+  t: FinancialTransaction,
+  periodType: FinancePeriodType,
+  year: number,
+  month: number // 1 a 12
+): boolean {
+  if (periodType === 'all') return true;
+
+  const targetDateStr = t.dueDate || t.paidAt || t.createdAt;
+  const monthName = MONTH_NAMES[month - 1].toLowerCase();
+  const monthPad = String(month).padStart(2, '0');
+  const yearStr = String(year);
+
+  if (periodType === 'yearly') {
+    if (targetDateStr && targetDateStr.startsWith(yearStr)) return true;
+    if (t.description && t.description.includes(yearStr)) return true;
+    return false;
+  }
+
+  if (periodType === 'monthly') {
+    // 1. Data no formato YYYY-MM
+    const yearMonthPrefix = `${yearStr}-${monthPad}`;
+    if (targetDateStr && targetDateStr.startsWith(yearMonthPrefix)) return true;
+
+    // 2. Descrição contendo nome do mês e ano
+    const descLower = (t.description || '').toLowerCase();
+    if (descLower.includes(monthName)) {
+      if (descLower.includes(yearStr) || (targetDateStr && targetDateStr.startsWith(yearStr))) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Retorna lista de anos disponíveis baseada nas transações cadastradas
+ */
+export function getAvailableYears(transactions: FinancialTransaction[]): number[] {
+  const currentYear = new Date().getFullYear();
+  const yearsSet = new Set<number>([currentYear, currentYear - 1]);
+
+  transactions.forEach((t) => {
+    const d = t.dueDate || t.paidAt || t.createdAt;
+    if (d && d.length >= 4) {
+      const parsedYear = parseInt(d.substring(0, 4), 10);
+      if (!isNaN(parsedYear) && parsedYear >= 2020 && parsedYear <= 2035) {
+        yearsSet.add(parsedYear);
+      }
+    }
+  });
+
+  return Array.from(yearsSet).sort((a, b) => b - a);
+}

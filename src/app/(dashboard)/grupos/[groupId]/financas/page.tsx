@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   FinanceService, 
   GroupService 
@@ -13,6 +13,12 @@ import {
   TransactionType,
   PaymentStatus
 } from '@/types';
+import { 
+  matchTransactionPeriod, 
+  MONTH_NAMES, 
+  FinancePeriodType, 
+  getAvailableYears 
+} from '@/lib/utils/finance-utils';
 import { showToast } from '@/components/ui/Toast';
 import { 
   DollarSign, 
@@ -39,7 +45,8 @@ import {
   Archive,
   Edit3,
   Trash2,
-  Save
+  Save,
+  BarChart3
 } from 'lucide-react';
 
 const CATEGORY_LABELS: Record<TransactionCategory, { label: string; icon: string; badgeColor: string }> = {
@@ -68,6 +75,13 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
   const [members, setMembers] = useState<GroupMember[]>([]);
   const [activeFilter, setActiveFilter] = useState<'all' | 'inadimplentes' | 'cartoes' | 'mensalidades' | 'diarias' | 'saldo_inicial' | 'expenses'>('all');
   
+  // ---------------------------------------------------------------------------
+  // Filtro Temporal de Período (Mensal / Anual / Geral)
+  // ---------------------------------------------------------------------------
+  const [periodType, setPeriodType] = useState<FinancePeriodType>('monthly');
+  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);
+
   // Modal de Criação
   const [modalOpen, setModalOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'mensalidade' | 'lancamento_geral'>('mensalidade');
@@ -100,9 +114,9 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
   // ---------------------------------------------------------------------------
   const [monthlyMode, setMonthlyMode] = useState<'batch' | 'single'>('batch');
   const [singleMonthlyUserId, setSingleMonthlyUserId] = useState('');
-  const [monthRef, setMonthRef] = useState('Março/2026');
+  const [monthRef, setMonthRef] = useState(`${MONTH_NAMES[selectedMonth - 1]}/${selectedYear}`);
   const [monthlyAmount, setMonthlyAmount] = useState(80.00);
-  const [monthlyDueDate, setMonthlyDueDate] = useState('2026-03-10');
+  const [monthlyDueDate, setMonthlyDueDate] = useState(`${selectedYear}-${String(selectedMonth).padStart(2, '0')}-10`);
   const [monthlyIsPaid, setMonthlyIsPaid] = useState(false);
 
   // ---------------------------------------------------------------------------
@@ -139,20 +153,39 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
 
   const isDirector = currentMember?.role === 'presidente' || currentMember?.role === 'adm' || currentMember?.role === 'tesoureiro';
 
-  // Cálculos Financeiros
-  const totalIncome = transactions
+  // Anos disponíveis
+  const availableYears = useMemo(() => getAvailableYears(transactions), [transactions]);
+
+  // Transações filtradas pelo período selecionado (Mensal / Anual / Geral)
+  const periodFilteredTransactions = useMemo(() => {
+    return transactions.filter((t) => matchTransactionPeriod(t, periodType, selectedYear, selectedMonth));
+  }, [transactions, periodType, selectedYear, selectedMonth]);
+
+  // Cálculos Financeiros do Período Selecionado
+  const periodIncome = periodFilteredTransactions
     .filter((t) => t.type === 'income' && t.status === 'paid')
     .reduce((acc, t) => acc + t.amount, 0);
 
-  const totalPending = transactions
+  const periodPending = periodFilteredTransactions
     .filter((t) => t.type === 'income' && (t.status === 'pending' || t.status === 'overdue'))
     .reduce((acc, t) => acc + t.amount, 0);
 
-  const totalExpenses = transactions
+  const periodExpenses = periodFilteredTransactions
     .filter((t) => t.type === 'expense' && t.status === 'paid')
     .reduce((acc, t) => acc + t.amount, 0);
 
-  const netBalance = totalIncome - totalExpenses;
+  const periodNetBalance = periodIncome - periodExpenses;
+
+  // Saldo Acumulado Total em Caixa (Geral)
+  const totalAllTimeIncome = transactions
+    .filter((t) => t.type === 'income' && t.status === 'paid')
+    .reduce((acc, t) => acc + t.amount, 0);
+
+  const totalAllTimeExpenses = transactions
+    .filter((t) => t.type === 'expense' && t.status === 'paid')
+    .reduce((acc, t) => acc + t.amount, 0);
+
+  const allTimeNetBalance = totalAllTimeIncome - totalAllTimeExpenses;
 
   const delinquentMembers = members.filter((m) => m.isBlockedFinancial);
 
@@ -316,6 +349,13 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
     setTimeout(() => setNotification(null), 4000);
   };
 
+  // Rótulo amigável do período atual
+  const currentPeriodLabel = useMemo(() => {
+    if (periodType === 'all') return 'Todo o Histórico (Geral)';
+    if (periodType === 'yearly') return `Ano de ${selectedYear}`;
+    return `${MONTH_NAMES[selectedMonth - 1]} de ${selectedYear}`;
+  }, [periodType, selectedMonth, selectedYear]);
+
   // Se o usuário não for da diretoria (Presidente, ADM, Tesoureiro), bloqueia a visualização detalhada
   if (currentMember && !isDirector) {
     return (
@@ -388,42 +428,139 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
         </div>
       )}
 
-      {/* KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        {/* Saldo Líquido */}
-        <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-5">
-          <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-semibold uppercase">Saldo Atual em Caixa</span>
+      {/* ========================================================================= */}
+      {/* SELETOR DE PERÍODO (MENSAL COM ESCOLHA DE MÊS, ANUAL COM ANO OU GERAL) */}
+      {/* ========================================================================= */}
+      <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md">
+        <div className="flex items-center gap-2">
+          <Calendar className="w-4 h-4 text-[#00b49f]" />
+          <div>
+            <span className="text-xs font-bold text-white block">Período de Análise</span>
+            <span className="text-[11px] text-slate-400">
+              Visualizando: <strong className="text-[#00b49f] font-semibold">{currentPeriodLabel}</strong>
+            </span>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Botões do Tipo de Período */}
+          <div className="bg-slate-950 p-1 rounded-xl border border-slate-800 flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setPeriodType('monthly')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                periodType === 'monthly'
+                  ? 'bg-[#00b49f] text-slate-950 shadow'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              Mensal
+            </button>
+            <button
+              type="button"
+              onClick={() => setPeriodType('yearly')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                periodType === 'yearly'
+                  ? 'bg-[#00b49f] text-slate-950 shadow'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              Anual
+            </button>
+            <button
+              type="button"
+              onClick={() => setPeriodType('all')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                periodType === 'all'
+                  ? 'bg-[#00b49f] text-slate-950 shadow'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              Geral
+            </button>
+          </div>
+
+          {/* Seletores Dinâmicos de Mês e Ano */}
+          {periodType === 'monthly' && (
+            <select
+              value={selectedMonth}
+              onChange={(e) => setSelectedMonth(parseInt(e.target.value, 10))}
+              className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white font-bold focus:outline-none focus:border-[#00b49f]"
+            >
+              {MONTH_NAMES.map((mName, idx) => (
+                <option key={mName} value={idx + 1}>
+                  {mName}
+                </option>
+              ))}
+            </select>
+          )}
+
+          {(periodType === 'monthly' || periodType === 'yearly') && (
+            <select
+              value={selectedYear}
+              onChange={(e) => setSelectedYear(parseInt(e.target.value, 10))}
+              className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white font-bold font-mono focus:outline-none focus:border-[#00b49f]"
+            >
+              {availableYears.map((yr) => (
+                <option key={yr} value={yr}>
+                  {yr}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+      </div>
+
+      {/* KPI Cards do Período */}
+      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3.5">
+        {/* Saldo Líquido do Período */}
+        <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4">
+          <div className="flex items-center justify-between text-slate-400 mb-1.5">
+            <span className="text-[11px] font-semibold uppercase">Saldo no Período</span>
             <DollarSign className="w-4 h-4 text-emerald-400" />
           </div>
-          <p className={`text-2xl font-black ${netBalance >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-            {formatCurrency(netBalance)}
+          <p className={`text-xl sm:text-2xl font-black ${periodNetBalance >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+            {formatCurrency(periodNetBalance)}
           </p>
-          <p className="text-[11px] text-slate-500 mt-1">Saldo acumulado (incluindo saldo inicial e histórico)</p>
+          <p className="text-[10px] text-slate-500 mt-0.5">
+            Entradas - Saídas ({periodType === 'all' ? 'Geral' : currentPeriodLabel})
+          </p>
         </div>
 
-        {/* Total a Receber / Em Atraso */}
-        <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-5">
-          <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-semibold uppercase">Total a Receber</span>
-            <TrendingUp className="w-4 h-4 text-amber-400" />
+        {/* Receitas do Período */}
+        <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4">
+          <div className="flex items-center justify-between text-slate-400 mb-1.5">
+            <span className="text-[11px] font-semibold uppercase text-emerald-400">Receitas Pagas</span>
+            <TrendingUp className="w-4 h-4 text-emerald-400" />
           </div>
-          <p className="text-2xl font-black text-amber-400">
-            {formatCurrency(totalPending)}
+          <p className="text-xl sm:text-2xl font-black text-white">
+            {formatCurrency(periodIncome)}
           </p>
-          <p className="text-[11px] text-slate-500 mt-1">Mensalidades antigas/atuais, diárias e multas pendentes</p>
+          <p className="text-[10px] text-slate-500 mt-0.5">Mensalidades, diárias e entradas</p>
         </div>
 
-        {/* Total de Despesas */}
-        <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-5">
-          <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-semibold uppercase">Despesas Pagas</span>
+        {/* Despesas do Período */}
+        <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4">
+          <div className="flex items-center justify-between text-slate-400 mb-1.5">
+            <span className="text-[11px] font-semibold uppercase text-rose-400">Despesas Pagas</span>
             <TrendingDown className="w-4 h-4 text-rose-400" />
           </div>
-          <p className="text-2xl font-black text-rose-400">
-            {formatCurrency(totalExpenses)}
+          <p className="text-xl sm:text-2xl font-black text-rose-400">
+            {formatCurrency(periodExpenses)}
           </p>
-          <p className="text-[11px] text-slate-500 mt-1">Campo, arbitragem, goleiros, água e custos</p>
+          <p className="text-[10px] text-slate-500 mt-0.5">Quadra, juiz, água e custos</p>
+        </div>
+
+        {/* Total a Receber no Período */}
+        <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4">
+          <div className="flex items-center justify-between text-slate-400 mb-1.5">
+            <span className="text-[11px] font-semibold uppercase text-amber-400">A Receber / Pendente</span>
+            <AlertTriangle className="w-4 h-4 text-amber-400" />
+          </div>
+          <p className="text-xl sm:text-2xl font-black text-amber-400">
+            {formatCurrency(periodPending)}
+          </p>
+          <p className="text-[10px] text-slate-500 mt-0.5">Débitos em aberto no período</p>
         </div>
       </div>
 
@@ -467,26 +604,30 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
       <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 sm:p-6 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
           <div>
-            <h2 className="text-base font-bold text-white">Extrato Financeiro & Histórico</h2>
-            <p className="text-xs text-slate-400">Histórico de mensalidades antigas e atuais, receitas, despesas e multas</p>
+            <h2 className="text-base font-bold text-white flex items-center gap-2">
+              <BarChart3 className="w-4 h-4 text-[#00b49f]" /> Extrato & Histórico ({currentPeriodLabel})
+            </h2>
+            <p className="text-xs text-slate-400">
+              Mostrando <strong>{periodFilteredTransactions.length}</strong> lançamentos correspondentes
+            </p>
           </div>
           
           <div className="flex items-center gap-1.5 flex-wrap">
             {[
               { id: 'all', label: 'Todos' },
-              { id: 'inadimplentes', label: 'Pendentes / Débitos' },
+              { id: 'inadimplentes', label: 'Pendentes' },
               { id: 'mensalidades', label: '⭐ Mensalidades' },
-              { id: 'cartoes', label: '🟦🟥 Cartões & Multas' },
+              { id: 'cartoes', label: '🟦🟥 Multas' },
               { id: 'diarias', label: '🎟️ Diárias' },
-              { id: 'saldo_inicial', label: '🏦 Saldo Inicial / Migração' },
+              { id: 'saldo_inicial', label: '🏦 Saldo Inicial' },
               { id: 'expenses', label: '📉 Despesas' },
             ].map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setActiveFilter(tab.id as any)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
                   activeFilter === tab.id
-                    ? 'bg-emerald-500 text-slate-950 font-bold'
+                    ? 'bg-[#00b49f] text-slate-950 font-bold'
                     : 'bg-slate-950 border border-slate-800 text-slate-400 hover:text-white'
                 }`}
               >
@@ -509,7 +650,7 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/50">
-              {transactions
+              {periodFilteredTransactions
                 .filter((t) => {
                   if (activeFilter === 'inadimplentes') return t.status === 'pending' || t.status === 'overdue';
                   if (activeFilter === 'cartoes') return ['cartao_azul', 'cartao_vermelho', 'multa_atraso', 'multa_falta', 'cartao_amarelo'].includes(t.category);
@@ -589,9 +730,9 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
             </tbody>
           </table>
 
-          {transactions.length === 0 && (
+          {periodFilteredTransactions.length === 0 && (
             <div className="text-center py-8 text-slate-500 text-xs italic">
-              Nenhuma transação financeira registrada neste grupo ainda.
+              Nenhuma movimentação financeira encontrada para o período <strong>{currentPeriodLabel}</strong>.
             </div>
           )}
         </div>

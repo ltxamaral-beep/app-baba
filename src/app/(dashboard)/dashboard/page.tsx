@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { 
   GroupService, 
@@ -19,6 +19,12 @@ import {
   AppNotification 
 } from '@/types';
 import { formatCurrency } from '@/lib/utils/masks';
+import { 
+  matchTransactionPeriod, 
+  MONTH_NAMES, 
+  FinancePeriodType, 
+  getAvailableYears 
+} from '@/lib/utils/finance-utils';
 import { 
   Users, 
   Calendar, 
@@ -79,6 +85,11 @@ export default function DashboardPage() {
     deadlineTime: '12:00',
     hasDeadline: true,
   });
+
+  // Filtro de Período Financeiro no Dashboard
+  const [financePeriodType, setFinancePeriodType] = useState<FinancePeriodType>('monthly');
+  const [financeSelectedYear, setFinanceSelectedYear] = useState<number>(new Date().getFullYear());
+  const [financeSelectedMonth, setFinanceSelectedMonth] = useState<number>(new Date().getMonth() + 1);
 
   const loadDashboardData = async () => {
     const currentUser = UserService.getCurrentUser();
@@ -267,24 +278,40 @@ export default function DashboardPage() {
   const maxSlots = nextMatch?.maxPlayers || activeGroup?.maxSlots || 24;
   const isAttendanceOpen = !!(activeGroup?.isOpenAttendance && nextMatch);
 
-  // Cálculos Financeiros
-  const totalIncome = transactions.filter((t) => t.type === 'income' && t.status === 'paid').reduce((a, b) => a + b.amount, 0);
-  const totalExpenses = transactions.filter((t) => t.type === 'expense' && t.status === 'paid').reduce((a, b) => a + b.amount, 0);
-  const netBalance = totalIncome - totalExpenses;
+  // Anos disponíveis
+  const availableYears = useMemo(() => getAvailableYears(transactions), [transactions]);
 
-  // Receita e Despesa Mensal (Mês Vigente)
-  const currentMonthPrefix = new Date().toISOString().substring(0, 7); // ex: "2026-08"
-  const monthlyIncome = transactions
-    .filter((t) => t.type === 'income' && t.status === 'paid' && (t.paidAt || t.dueDate || '').startsWith(currentMonthPrefix))
+  // Transações filtradas pelo período selecionado no Dashboard
+  const periodFilteredTransactions = useMemo(() => {
+    return transactions.filter((t) => matchTransactionPeriod(t, financePeriodType, financeSelectedYear, financeSelectedMonth));
+  }, [transactions, financePeriodType, financeSelectedYear, financeSelectedMonth]);
+
+  // Cálculos Financeiros do Período Selecionado
+  const periodIncome = periodFilteredTransactions
+    .filter((t) => t.type === 'income' && t.status === 'paid')
     .reduce((a, b) => a + b.amount, 0);
 
-  const monthlyExpense = transactions
-    .filter((t) => t.type === 'expense' && t.status === 'paid' && (t.paidAt || t.dueDate || '').startsWith(currentMonthPrefix))
+  const periodExpenses = periodFilteredTransactions
+    .filter((t) => t.type === 'expense' && t.status === 'paid')
     .reduce((a, b) => a + b.amount, 0);
+
+  const periodNet = periodIncome - periodExpenses;
+
+  // Saldo Total Geral Acumulado no Caixa
+  const totalAllTimeIncome = transactions.filter((t) => t.type === 'income' && t.status === 'paid').reduce((a, b) => a + b.amount, 0);
+  const totalAllTimeExpenses = transactions.filter((t) => t.type === 'expense' && t.status === 'paid').reduce((a, b) => a + b.amount, 0);
+  const netBalance = totalAllTimeIncome - totalAllTimeExpenses;
 
   // Membros Inadimplentes / Débitos Pendentes
-  const overdueTransactions = transactions.filter((t) => t.type === 'income' && (t.status === 'pending' || t.status === 'overdue'));
+  const overdueTransactions = periodFilteredTransactions.filter((t) => t.type === 'income' && (t.status === 'pending' || t.status === 'overdue'));
+  const allOverdueTransactions = transactions.filter((t) => t.type === 'income' && (t.status === 'pending' || t.status === 'overdue'));
   const userPendingTransaction = transactions.find((t) => t.userId === user?.id && t.status !== 'paid');
+
+  const currentPeriodLabel = useMemo(() => {
+    if (financePeriodType === 'all') return 'Todo o Histórico (Geral)';
+    if (financePeriodType === 'yearly') return `Ano de ${financeSelectedYear}`;
+    return `${MONTH_NAMES[financeSelectedMonth - 1]} de ${financeSelectedYear}`;
+  }, [financePeriodType, financeSelectedMonth, financeSelectedYear]);
 
   const isPresident = currentMember?.role === 'presidente' || activeGroup?.createdBy === user?.id;
 
@@ -518,62 +545,135 @@ export default function DashboardPage() {
       )}
 
       {/* ------------------------------------------------------------- */}
-      {/* 1. MÓDULO FINANCEIRO (SALDO, RECEITA MENSAL, DESPESA & DÉBITOS) */}
+      {/* 1. MÓDULO FINANCEIRO (SALDO, RECEITA, DESPESA & DÉBITOS COM FILTRO DE PERÍODO) */}
       {/* ------------------------------------------------------------- */}
       <div className="bg-slate-900/80 border border-slate-800 rounded-3xl p-6 space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-800 pb-3">
           <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 flex items-center justify-center font-bold">
               💰
             </div>
             <div>
               <h2 className="text-base font-black text-white">Resumo Financeiro & Caixa</h2>
-              <p className="text-xs text-slate-400">Visão consolidada de caixa, receitas e controle de débitos.</p>
+              <p className="text-xs text-slate-400">
+                Período: <strong className="text-[#00b49f]">{currentPeriodLabel}</strong>
+              </p>
             </div>
           </div>
 
-          {isDirector && (
-            <Link
-              href={`/grupos/${activeGroup?.id}/financas`}
-              className="inline-flex items-center gap-1.5 bg-slate-950 hover:bg-slate-800 border border-slate-800 text-xs font-bold text-slate-200 px-3.5 py-2 rounded-xl transition-colors"
-            >
-              <DollarSign className="w-3.5 h-3.5 text-emerald-400" /> Acessar Módulo Financeiro
-            </Link>
-          )}
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Seletor de Período (Mensal / Anual / Geral) */}
+            <div className="bg-slate-950 p-1 rounded-xl border border-slate-800 flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setFinancePeriodType('monthly')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                  financePeriodType === 'monthly'
+                    ? 'bg-[#00b49f] text-slate-950 shadow font-black'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Mensal
+              </button>
+              <button
+                type="button"
+                onClick={() => setFinancePeriodType('yearly')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                  financePeriodType === 'yearly'
+                    ? 'bg-[#00b49f] text-slate-950 shadow font-black'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Anual
+              </button>
+              <button
+                type="button"
+                onClick={() => setFinancePeriodType('all')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                  financePeriodType === 'all'
+                    ? 'bg-[#00b49f] text-slate-950 shadow font-black'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Geral
+              </button>
+            </div>
+
+            {/* Seletores de Mês e Ano */}
+            {financePeriodType === 'monthly' && (
+              <select
+                value={financeSelectedMonth}
+                onChange={(e) => setFinanceSelectedMonth(parseInt(e.target.value, 10))}
+                className="bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1 text-xs text-white font-bold focus:outline-none focus:border-[#00b49f]"
+              >
+                {MONTH_NAMES.map((mName, idx) => (
+                  <option key={mName} value={idx + 1}>
+                    {mName}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            {(financePeriodType === 'monthly' || financePeriodType === 'yearly') && (
+              <select
+                value={financeSelectedYear}
+                onChange={(e) => setFinanceSelectedYear(parseInt(e.target.value, 10))}
+                className="bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1 text-xs text-white font-bold font-mono focus:outline-none focus:border-[#00b49f]"
+              >
+                {availableYears.map((yr) => (
+                  <option key={yr} value={yr}>
+                    {yr}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            {isDirector && (
+              <Link
+                href={`/grupos/${activeGroup?.id}/financas`}
+                className="inline-flex items-center gap-1.5 bg-slate-950 hover:bg-slate-800 border border-slate-800 text-xs font-bold text-slate-200 px-3 py-1 rounded-xl transition-colors"
+              >
+                <DollarSign className="w-3.5 h-3.5 text-emerald-400" /> Detalhes & Extrato
+              </Link>
+            )}
+          </div>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          {/* Saldo Total em Caixa */}
+          {/* Saldo do Período */}
           <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-4">
             <span className="text-[10px] text-slate-400 font-bold uppercase flex items-center gap-1 mb-1">
-              <DollarSign className="w-3.5 h-3.5 text-emerald-400" /> Saldo Total em Caixa
+              <DollarSign className="w-3.5 h-3.5 text-emerald-400" /> 
+              {financePeriodType === 'all' ? 'Saldo Total em Caixa' : 'Saldo no Período'}
             </span>
-            <p className={`text-2xl font-black ${netBalance >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-              {formatCurrency(netBalance)}
+            <p className={`text-2xl font-black ${(financePeriodType === 'all' ? netBalance : periodNet) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+              {formatCurrency(financePeriodType === 'all' ? netBalance : periodNet)}
             </p>
-            <p className="text-[10px] text-slate-500 mt-0.5">Acumulado da pelada</p>
+            <p className="text-[10px] text-slate-500 mt-0.5">
+              {financePeriodType === 'all' ? 'Todo o histórico da pelada' : `Receitas - Despesas (${currentPeriodLabel})`}
+            </p>
           </div>
 
-          {/* Receita Mensal */}
+          {/* Receitas do Período */}
           <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-4">
             <span className="text-[10px] text-emerald-400 font-bold uppercase flex items-center gap-1 mb-1">
-              <TrendingUp className="w-3.5 h-3.5 text-emerald-400" /> Receita do Mês
+              <TrendingUp className="w-3.5 h-3.5 text-emerald-400" /> Receitas ({financePeriodType === 'all' ? 'Total' : 'Período'})
             </span>
             <p className="text-2xl font-black text-white">
-              {formatCurrency(monthlyIncome || totalIncome)}
+              {formatCurrency(financePeriodType === 'all' ? totalAllTimeIncome : periodIncome)}
             </p>
-            <p className="text-[10px] text-slate-500 mt-0.5">Mensalidades & diárias pagas</p>
+            <p className="text-[10px] text-slate-500 mt-0.5">Mensalidades, diárias & entradas pagas</p>
           </div>
 
-          {/* Despesa Mensal */}
+          {/* Despesas do Período */}
           <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-4">
             <span className="text-[10px] text-rose-400 font-bold uppercase flex items-center gap-1 mb-1">
-              <TrendingDown className="w-3.5 h-3.5 text-rose-400" /> Despesa do Mês
+              <TrendingDown className="w-3.5 h-3.5 text-rose-400" /> Despesas ({financePeriodType === 'all' ? 'Total' : 'Período'})
             </span>
             <p className="text-2xl font-black text-rose-400">
-              {formatCurrency(monthlyExpense || totalExpenses)}
+              {formatCurrency(financePeriodType === 'all' ? totalAllTimeExpenses : periodExpenses)}
             </p>
-            <p className="text-[10px] text-slate-500 mt-0.5">Quadra, juiz, água e custos</p>
+            <p className="text-[10px] text-slate-500 mt-0.5">Quadra, juiz, água e custos pagos</p>
           </div>
         </div>
 
@@ -585,13 +685,13 @@ export default function DashboardPage() {
                 <AlertTriangle className="w-4 h-4" /> Membros com Débito ou em Atraso ({overdueTransactions.length})
               </span>
               <span className="text-[11px] text-slate-400">
-                Total pendente: <strong>{formatCurrency(overdueTransactions.reduce((a, b) => a + b.amount, 0))}</strong>
+                Total pendente no período: <strong>{formatCurrency(overdueTransactions.reduce((a, b) => a + b.amount, 0))}</strong>
               </span>
             </div>
 
             {overdueTransactions.length === 0 ? (
               <p className="text-xs text-emerald-400 font-semibold py-2">
-                ✓ Parabéns! Todos os atletas do grupo estão com pagamentos 100% em dia.
+                ✓ Nenhum débito em aberto para o período ({currentPeriodLabel}).
               </p>
             ) : (
               <div className="divide-y divide-slate-900 max-h-40 overflow-y-auto pr-1">
