@@ -1459,7 +1459,22 @@ export const GroupService = {
 // ---------------------------------------------------------------------------
 export const MatchService = {
   getMatches(groupId: string): Match[] {
-    return getStored<Match[]>(`matches_${groupId}`, []);
+    const direct = getStored<Match[]>(`matches_${groupId}`, []);
+    if (direct.length > 0) return direct;
+
+    // Fallback: se não encontrar no groupId específico, busca se há partidas em outros IDs locais
+    const allGroups = GroupService.getGroups();
+    for (const g of allGroups) {
+      if (g.id !== groupId) {
+        const other = getStored<Match[]>(`matches_${g.id}`, []);
+        if (other.length > 0) {
+          const migrated = other.map((m) => ({ ...m, groupId }));
+          setStored(`matches_${groupId}`, migrated);
+          return migrated;
+        }
+      }
+    }
+    return direct;
   },
 
   getMatchById(matchId: string): Match | undefined {
@@ -1469,6 +1484,19 @@ export const MatchService = {
       const target = matches.find((m) => m.id === matchId);
       if (target) return target;
     }
+    // Fallback por todas as chaves de peladas
+    if (typeof window !== 'undefined') {
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith('pelada_matches_')) {
+            const list: Match[] = JSON.parse(localStorage.getItem(k) || '[]');
+            const found = list.find((m) => m.id === matchId);
+            if (found) return found;
+          }
+        }
+      } catch {}
+    }
     return undefined;
   },
 
@@ -1477,13 +1505,46 @@ export const MatchService = {
     if (!isSupabaseConfigured || !supabase || !groupId) return local;
 
     try {
-      const { data, error } = await supabase
+      // 1. Garante que partidas locais sejam enviadas ao Supabase se ainda não estiverem lá
+      if (isValidUUID(groupId) && local.length > 0) {
+        for (const lm of local) {
+          try {
+            const formattedTime = lm.startTime
+              ? (lm.startTime.length === 5 ? `${lm.startTime}:00` : lm.startTime)
+              : '20:00:00';
+
+            await supabase.from('matches').upsert([{
+              id: isValidUUID(lm.id) ? lm.id : generateUUID(),
+              group_id: groupId,
+              match_date: lm.matchDate,
+              start_time: formattedTime,
+              confirmation_deadline: lm.confirmationDeadline || null,
+              max_players: lm.maxPlayers || 24,
+              cost_diarista: lm.costDiarista || 25,
+              status: lm.status || 'scheduled',
+            }]);
+          } catch (e) {
+            console.warn('Erro ao subir partida local para Supabase:', e);
+          }
+        }
+      }
+
+      // 2. Busca todas as partidas do grupo no Supabase
+      let query = supabase
         .from('matches')
         .select('*')
-        .eq('group_id', groupId)
         .order('match_date', { ascending: false });
 
-      if (error || !data) return local;
+      if (isValidUUID(groupId)) {
+        query = query.eq('group_id', groupId);
+      }
+
+      const { data, error } = await query;
+
+      if (error || !data) {
+        if (error) console.warn('Aviso ao consultar partidas do Supabase:', error);
+        return local;
+      }
 
       const remoteMatches: Match[] = data.map((m: any) => ({
         id: m.id,
@@ -1553,16 +1614,25 @@ export const MatchService = {
     if (isSupabaseConfigured && supabase) {
       (async () => {
         try {
-          await supabase.from('matches').upsert([{
-            id: newMatch.id,
-            group_id: groupId,
-            match_date: matchDate,
-            start_time: startTime.length === 5 ? `${startTime}:00` : startTime,
-            confirmation_deadline: confirmationDeadline || null,
-            max_players: maxPlayers,
-            cost_diarista: costDiarista,
-            status: 'scheduled',
-          }]);
+          const targetG = GroupService.getGroupById(groupId);
+          if (targetG && !isValidUUID(targetG.id)) {
+            await GroupService.syncAllWithCloud();
+          }
+
+          const targetGroupIdInCloud = isValidUUID(groupId) ? groupId : (targetG && isValidUUID(targetG.id) ? targetG.id : null);
+          if (targetGroupIdInCloud) {
+            const formattedTime = startTime.length === 5 ? `${startTime}:00` : startTime;
+            await supabase.from('matches').upsert([{
+              id: newMatch.id,
+              group_id: targetGroupIdInCloud,
+              match_date: matchDate,
+              start_time: formattedTime,
+              confirmation_deadline: confirmationDeadline || null,
+              max_players: maxPlayers,
+              cost_diarista: costDiarista,
+              status: 'scheduled',
+            }]);
+          }
         } catch (err) {
           console.warn('Erro ao salvar partida no Supabase:', err);
         }
@@ -1606,7 +1676,7 @@ export const MatchService = {
     }
     GroupService.updateGroup(groupId, { isOpenAttendance: false });
 
-    if (isSupabaseConfigured && supabase) {
+    if (isSupabaseConfigured && supabase && isValidUUID(matchId)) {
       (async () => {
         try {
           await supabase.from('matches').update({ status: 'in_progress' }).eq('id', matchId);
@@ -1626,7 +1696,7 @@ export const MatchService = {
     }
     GroupService.updateGroup(groupId, { maxSlots: maxPlayers });
 
-    if (isSupabaseConfigured && supabase) {
+    if (isSupabaseConfigured && supabase && isValidUUID(matchId)) {
       (async () => {
         try {
           await supabase.from('matches').update({ max_players: maxPlayers }).eq('id', matchId);
@@ -1646,6 +1716,32 @@ export const MatchService = {
     if (!isSupabaseConfigured || !supabase || !matchId) return local;
 
     try {
+      // 1. Sincroniza presenças locais para a nuvem
+      if (isValidUUID(matchId) && local.length > 0) {
+        for (const la of local) {
+          if (la.status !== 'cancelled') {
+            try {
+              const validUserId = await UserService.ensureUserInCloud(la.user);
+              await supabase.from('match_attendances').upsert([{
+                id: isValidUUID(la.id) ? la.id : generateUUID(),
+                match_id: matchId,
+                user_id: validUserId,
+                status: la.status,
+                arrival_order: la.arrivalOrder || null,
+                is_financial_blocked: la.isFinancialBlocked || false,
+                confirmed_at: la.confirmedAt || new Date().toISOString(),
+                checked_in_at: la.checkedInAt || null,
+              }], { onConflict: 'match_id,user_id' });
+            } catch (e) {
+              console.warn('Erro ao subir presença para o Supabase:', e);
+            }
+          }
+        }
+      }
+
+      if (!isValidUUID(matchId)) return local;
+
+      // 2. Busca presenças atualizadas do Supabase
       const { data, error } = await supabase
         .from('match_attendances')
         .select(`
@@ -1764,15 +1860,31 @@ export const MatchService = {
     if (isSupabaseConfigured && supabase) {
       (async () => {
         try {
+          // Garante que a partida existe no Supabase
+          if (match && isValidUUID(match.id) && isValidUUID(match.groupId)) {
+            await supabase.from('matches').upsert([{
+              id: match.id,
+              group_id: match.groupId,
+              match_date: match.matchDate,
+              start_time: match.startTime.length === 5 ? `${match.startTime}:00` : match.startTime,
+              confirmation_deadline: match.confirmationDeadline || null,
+              max_players: match.maxPlayers || 24,
+              cost_diarista: match.costDiarista || 25,
+              status: match.status || 'scheduled',
+            }]);
+          }
+
           const validUserId = await UserService.ensureUserInCloud(user);
-          await supabase.from('match_attendances').upsert([{
-            id: attendanceId,
-            match_id: matchId,
-            user_id: validUserId,
-            status: newAttendance.status,
-            is_financial_blocked: false,
-            confirmed_at: newAttendance.confirmedAt,
-          }], { onConflict: 'match_id,user_id' });
+          if (isValidUUID(matchId)) {
+            await supabase.from('match_attendances').upsert([{
+              id: attendanceId,
+              match_id: matchId,
+              user_id: validUserId,
+              status: newAttendance.status,
+              is_financial_blocked: false,
+              confirmed_at: newAttendance.confirmedAt,
+            }], { onConflict: 'match_id,user_id' });
+          }
         } catch (err) {
           console.warn('Erro ao salvar presença no Supabase:', err);
         }

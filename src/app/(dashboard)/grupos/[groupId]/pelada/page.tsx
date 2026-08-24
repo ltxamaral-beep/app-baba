@@ -155,10 +155,12 @@ export default function PeladaHubPage({ params }: { params: { groupId: string } 
         const cloudMatches = await MatchService.syncMatchesFromCloud(g.id);
         if (cloudMatches && cloudMatches.length > 0) {
           setMatches(cloudMatches);
-          const latest = cloudMatches[0];
-          setActiveMatch(latest);
+          const openMatch = cloudMatches.find((m) => m.status === 'scheduled') || cloudMatches[0];
+          setActiveMatch(openMatch);
+          const hasOpen = cloudMatches.some((m) => m.status === 'scheduled');
+          setGroup((prev) => prev ? { ...prev, isOpenAttendance: hasOpen } : prev);
 
-          const cloudAtts = await MatchService.syncAttendancesFromCloud(latest.id);
+          const cloudAtts = await MatchService.syncAttendancesFromCloud(openMatch.id);
           setAttendances(cloudAtts);
         }
       } catch (err) {

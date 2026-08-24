@@ -158,8 +158,9 @@ export default function DashboardPage() {
       if (targetG) {
         const cloudMatches = await MatchService.syncMatchesFromCloud(targetG.id);
         if (cloudMatches && cloudMatches.length > 0) {
-          setNextMatch(cloudMatches[0]);
-          const cloudAtts = await MatchService.syncAttendancesFromCloud(cloudMatches[0].id);
+          const openMatch = cloudMatches.find((m) => m.status === 'scheduled') || cloudMatches[0];
+          setNextMatch(openMatch);
+          const cloudAtts = await MatchService.syncAttendancesFromCloud(openMatch.id);
           setAttendances(cloudAtts);
         }
       }
@@ -171,8 +172,7 @@ export default function DashboardPage() {
   useEffect(() => {
     loadDashboardData();
     const interval = setInterval(() => {
-      const activeId = GroupService.getActiveGroupId();
-      setDashboardNotifs(NotificationService.getNotifications(activeId || undefined));
+      loadDashboardData();
     }, 5000);
 
     const handleGroupChanged = () => {
