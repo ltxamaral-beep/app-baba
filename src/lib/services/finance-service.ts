@@ -357,6 +357,7 @@ export const FinanceService = {
           if (error) throw error;
         }
       } catch (err) {
+        console.warn('Erro ao salvar transacao no Supabase:', err);
         throw new Error('Nao foi possivel salvar o lancamento financeiro na nuvem.');
         console.warn('Erro ao salvar transação no Supabase:', err);
       }
@@ -368,6 +369,27 @@ export const FinanceService = {
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('transactions_updated', { detail: { groupId } }));
       window.dispatchEvent(new Event('storage'));
+    }
+
+    if (data.type === 'income' && data.userId) {
+      if (data.status === 'pending' || data.status === 'overdue') {
+        await GroupService.blockMemberFinancial(groupId, data.userId, data.description);
+      }
+
+      const amount = Number(data.amount).toFixed(2).replace('.', ',');
+      await NotificationService.notifyUser(groupId, data.userId, {
+        type: 'financial_alert',
+        title: data.status === 'paid' ? 'Cobranca registrada como paga' : 'Nova cobranca gerada',
+        message: data.status === 'paid'
+          ? `${data.description}, no valor de R$ ${amount}, foi registrada como paga.`
+          : `${data.description}, no valor de R$ ${amount}, foi gerada com vencimento em ${data.dueDate}.`,
+        data: {
+          userId: data.userId,
+          userName: data.userName,
+          amount: data.amount,
+          category: data.category,
+        },
+      });
     }
 
     return newTrans;
@@ -675,6 +697,15 @@ export const FinanceService = {
           m.userId === settledUserId ? { ...m, isBlockedFinancial: false, blockedReason: undefined } : m
         );
         setStored(`members_${groupId}`, updatedMembers);
+
+        if (isSupabaseConfigured && supabase && isValidUUID(groupId) && isValidUUID(settledUserId)) {
+          const { error } = await supabase
+            .from('group_members')
+            .update({ is_blocked_financial: false, blocked_reason: null })
+            .eq('group_id', groupId)
+            .eq('user_id', settledUserId);
+          if (error) console.warn('Erro ao liberar membro no Supabase:', error);
+        }
       }
     }
 
@@ -692,6 +723,19 @@ export const FinanceService = {
       });
     } catch (e) {
       console.warn('Erro ao disparar notificação de baixa:', e);
+    }
+
+    if (settledUserId) {
+      await NotificationService.notifyUser(groupId, settledUserId, {
+        type: 'financial_alert',
+        title: 'Pagamento confirmado',
+        message: `Seu pagamento de R$ ${settledAmount.toFixed(2).replace('.', ',')} referente a ${settledDesc} foi confirmado.`,
+        data: {
+          userId: settledUserId,
+          userName: settledUserName,
+          amount: settledAmount,
+        },
+      });
     }
 
     if (typeof window !== 'undefined') {

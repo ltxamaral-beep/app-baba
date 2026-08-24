@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { GroupService, UserService, MatchService, NotificationService } from '@/lib/services/storage-service';
 import { Group, GroupMember, AppNotification, UserProfile } from '@/types';
+import { supabase } from '@/lib/supabase/client';
 
 export function Navbar() {
   const pathname = usePathname();
@@ -63,7 +64,7 @@ export function Navbar() {
     }
 
     // Carrega notificações
-    loadNotifications(activeId);
+    await loadNotifications(activeId);
 
     try {
       const cloudGroups = await GroupService.syncAllWithCloud();
@@ -72,15 +73,15 @@ export function Navbar() {
       setActiveGroupId(newActiveId);
       if (newActiveId) {
         setCurrentMember(GroupService.getMemberInGroup(newActiveId));
-        loadNotifications(newActiveId);
+        await loadNotifications(newActiveId);
       }
     } catch (e) {
       console.warn('Erro ao sincronizar Navbar com nuvem:', e);
     }
   };
 
-  const loadNotifications = (groupId?: string | null) => {
-    const list = NotificationService.getNotifications(groupId || undefined);
+  const loadNotifications = async (groupId?: string | null) => {
+    const list = await NotificationService.syncFromCloud(groupId || undefined);
     setNotifications(list);
   };
 
@@ -91,6 +92,11 @@ export function Navbar() {
       const activeId = GroupService.getActiveGroupId();
       loadNotifications(activeId);
     }, 5000);
+
+    const userId = UserService.getCurrentUser()?.id;
+    const channel = userId ? NotificationService.subscribe(userId, () => {
+      loadNotifications(GroupService.getActiveGroupId());
+    }) : null;
 
     const handleGroupChanged = (e: any) => {
       const gid = e?.detail?.groupId || GroupService.getActiveGroupId();
@@ -108,6 +114,7 @@ export function Navbar() {
       clearInterval(interval);
       window.removeEventListener('active_group_changed', handleGroupChanged);
       window.removeEventListener('storage', handleGroupChanged);
+      if (channel && supabase) supabase.removeChannel(channel);
     };
   }, [pathname]);
 
@@ -154,21 +161,21 @@ export function Navbar() {
     loadNavData();
   };
 
-  const handleMarkAllRead = () => {
-    NotificationService.markAllAsRead(activeGroupId || undefined);
-    loadNotifications(activeGroupId);
+  const handleMarkAllRead = async () => {
+    await NotificationService.markAllAsRead(activeGroupId || undefined);
+    await loadNotifications(activeGroupId);
   };
 
-  const handleMarkRead = (notifId: string) => {
-    NotificationService.markAsRead(notifId);
-    loadNotifications(activeGroupId);
+  const handleMarkRead = async (notifId: string) => {
+    await NotificationService.markAsRead(notifId);
+    await loadNotifications(activeGroupId);
   };
 
   const unreadCount = notifications.filter((n) => !n.read).length;
 
   const filteredNotifs = notifications.filter((n) => {
     if (notifFilter === 'requests') return n.type === 'member_request' || n.type === 'member_approved';
-    if (notifFilter === 'presence') return n.type === 'attendance_confirmed';
+    if (notifFilter === 'presence') return n.type === 'attendance_confirmed' || n.type === 'match_opened' || n.type === 'match_updated';
     if (notifFilter === 'arrival') return n.type === 'player_arrived';
     return true;
   });

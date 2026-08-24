@@ -6,6 +6,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { Menu, ArrowLeft, Bell, User, Check, X, Shield, PlusCircle, Trophy, DollarSign, Settings, Users, Sparkles } from 'lucide-react';
 import { GroupService, UserService, NotificationService } from '@/lib/services/storage-service';
 import { Group, GroupMember, AppNotification } from '@/types';
+import { supabase } from '@/lib/supabase/client';
 
 interface MobileHeaderProps {
   title?: string;
@@ -22,7 +23,7 @@ export function MobileHeader({ title, showBack = false, onBack }: MobileHeaderPr
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [notifOpen, setNotifOpen] = useState(false);
 
-  const loadData = () => {
+  const loadData = async () => {
     const groups = GroupService.getUserGroups();
     setUserGroups(groups);
     const activeId = GroupService.getActiveGroupId();
@@ -32,12 +33,16 @@ export function MobileHeader({ title, showBack = false, onBack }: MobileHeaderPr
     } else if (groups.length > 0) {
       setActiveGroup(groups[0].group);
     }
-    const notifs = NotificationService.getNotifications(activeId || undefined);
+    const notifs = await NotificationService.syncFromCloud(activeId || undefined);
     setNotifications(notifs);
   };
 
   useEffect(() => {
     loadData();
+
+    const interval = setInterval(loadData, 5000);
+    const userId = UserService.getCurrentUser()?.id;
+    const channel = userId ? NotificationService.subscribe(userId, loadData) : null;
 
     const handleGroupChanged = () => loadData();
     window.addEventListener('active_group_changed', handleGroupChanged);
@@ -46,6 +51,8 @@ export function MobileHeader({ title, showBack = false, onBack }: MobileHeaderPr
     return () => {
       window.removeEventListener('active_group_changed', handleGroupChanged);
       window.removeEventListener('storage', handleGroupChanged);
+      clearInterval(interval);
+      if (channel && supabase) supabase.removeChannel(channel);
     };
   }, [pathname]);
 

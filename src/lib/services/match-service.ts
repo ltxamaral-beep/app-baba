@@ -273,7 +273,7 @@ export const MatchService = {
         }
       }
 
-      NotificationService.addNotification(groupId, {
+      await NotificationService.notifyGroup(groupId, {
         type: 'match_opened',
         title: 'Lista de Presença Aberta! ⚽',
         message: `A lista para a pelada de ${matchDate} às ${startTime} foi aberta (${maxPlayers} vagas)!${deadlineText} Confirme sua vaga.`,
@@ -341,6 +341,12 @@ export const MatchService = {
       window.dispatchEvent(new Event('storage'));
     }
 
+    await NotificationService.notifyGroup(groupId, {
+      type: 'match_updated',
+      title: 'Lista de presenca atualizada',
+      message: `A diretoria atualizou a lista da pelada de ${target.matchDate} as ${target.startTime}.`,
+      data: { matchId: target.id, slotNumber: target.maxPlayers },
+    });
     return target;
   },
 
@@ -383,6 +389,13 @@ export const MatchService = {
       window.dispatchEvent(new Event('storage'));
     }
 
+    await NotificationService.notifyGroup(groupId, {
+      type: 'match_updated',
+      title: 'Lista de presenca encerrada',
+      message: 'A lista desta pelada foi removida pela diretoria.',
+      data: { matchId },
+    });
+
     return true;
   },
 
@@ -409,6 +422,13 @@ export const MatchService = {
       window.dispatchEvent(new CustomEvent('match_closed', { detail: { matchId, groupId } }));
       window.dispatchEvent(new Event('storage'));
     }
+
+    void NotificationService.notifyGroup(groupId, {
+      type: 'match_updated',
+      title: 'Lista de presenca fechada',
+      message: 'A diretoria encerrou as confirmacoes para esta pelada.',
+      data: { matchId },
+    });
   },
 
   async updateMatchMaxPlayers(groupId: string, matchId: string, maxPlayers: number): Promise<void> {
@@ -435,6 +455,13 @@ export const MatchService = {
         console.warn('Erro ao atualizar max_players no Supabase:', err);
       }
     }
+
+    await NotificationService.notifyGroup(groupId, {
+      type: 'match_updated',
+      title: 'Limite de vagas atualizado',
+      message: `A lista agora possui ${maxPlayers} vagas.`,
+      data: { matchId, slotNumber: maxPlayers },
+    });
   },
 
   getAttendances(matchId: string): MatchAttendance[] {
@@ -552,8 +579,26 @@ export const MatchService = {
       }
     }
 
+    const gid = groupId || match?.groupId || GroupService.getActiveGroupId() || '';
+    let isFinancialBlocked = false;
+    if (gid) {
+      const members = await GroupService.syncGroupMembersFromCloud(gid);
+      const member = members.find((item) =>
+        item.userId === validUserId || item.userId === user.id ||
+        (user.email && item.user?.email?.toLowerCase() === user.email.toLowerCase())
+      );
+      isFinancialBlocked = Boolean(member?.isBlockedFinancial);
+      if (isSupabaseConfigured && supabase && isValidUUID(gid) && isValidUUID(validUserId)) {
+        const { count } = await supabase.from('financial_transactions')
+          .select('id', { count: 'exact', head: true })
+          .eq('group_id', gid).eq('user_id', validUserId).eq('type', 'income')
+          .in('status', ['pending', 'overdue']);
+        isFinancialBlocked = isFinancialBlocked || Boolean(count);
+      }
+    }
+
     const confirmedCount = attendances.filter((a) => a.status === 'confirmed' || a.status === 'present').length;
-    const isWaitlist = isExpiredDeadline || confirmedCount >= maxPlayers;
+    const isWaitlist = isFinancialBlocked || isExpiredDeadline || confirmedCount >= maxPlayers;
 
     const attendanceId = existing ? existing.id : generateUUID();
     const newAttendance: MatchAttendance = {
@@ -562,7 +607,7 @@ export const MatchService = {
       userId: validUserId,
       user: validUser,
       status: isWaitlist ? 'waitlist' : 'confirmed',
-      isFinancialBlocked: false,
+      isFinancialBlocked,
       confirmedAt: new Date().toISOString(),
     };
 
@@ -583,7 +628,7 @@ export const MatchService = {
             match_id: matchId,
             user_id: validUserId,
             status: newAttendance.status,
-            is_financial_blocked: false,
+            is_financial_blocked: isFinancialBlocked,
             confirmed_at: newAttendance.confirmedAt,
           }], { onConflict: 'match_id,user_id' }),
           4000,
@@ -605,7 +650,7 @@ export const MatchService = {
     // Dispara notificação da lista de presença
     try {
       const gid = groupId || match?.groupId || GroupService.getActiveGroupId() || '';
-      NotificationService.addNotification(gid, {
+      await NotificationService.notifyGroup(gid, {
         type: 'attendance_confirmed',
         title: isWaitlist ? (isExpiredDeadline ? 'Fila de Espera (Prazo Expirado) ⏳' : 'Fila de Espera ⏳') : 'Presença Confirmada ✅',
         message: isExpiredDeadline
@@ -622,6 +667,15 @@ export const MatchService = {
       console.warn('Erro ao disparar notificação de presença:', e);
     }
 
+    if (isFinancialBlocked) {
+      await NotificationService.notifyUser(gid, validUserId, {
+        type: 'financial_alert',
+        title: 'Presenca enviada para a fila de espera',
+        message: 'Voce possui cobranca pendente. A diretoria podera liberar sua entrada na lista de confirmados.',
+        data: { matchId, userId: validUserId, userName: validUser.name },
+      });
+    }
+
     return newAttendance;
   },
 
@@ -630,13 +684,23 @@ export const MatchService = {
     const target = attendances.find((a) => a.id === attendanceIdOrUserId || a.userId === attendanceIdOrUserId);
     if (!target) return null;
 
+    const match = this.getMatchById(matchId);
+    const gid = match?.groupId || GroupService.getActiveGroupId() || '';
+    if (target.isFinancialBlocked) {
+      const currentUser = UserService.getCurrentUser();
+      const members = await GroupService.syncGroupMembersFromCloud(gid);
+      const director = members.find((member) => member.userId === currentUser.id);
+      if (!director || !['presidente', 'adm', 'tesoureiro'].includes(director.role)) return null;
+    }
+
     target.status = 'confirmed';
+    target.isFinancialBlocked = false;
     setStored(`attendances_${matchId}`, attendances);
 
     if (isSupabaseConfigured && supabase && isValidUUID(matchId)) {
       try {
         await withTimeout(
-          supabase.from('match_attendances').update({ status: 'confirmed' }).eq('id', target.id),
+          supabase.from('match_attendances').update({ status: 'confirmed', is_financial_blocked: false }).eq('id', target.id),
           3000,
           { data: null, error: null }
         );
@@ -653,9 +717,7 @@ export const MatchService = {
     }
 
     try {
-      const match = this.getMatchById(matchId);
-      const gid = match?.groupId || GroupService.getActiveGroupId() || '';
-      NotificationService.addNotification(gid, {
+      await NotificationService.notifyGroup(gid, {
         type: 'attendance_confirmed',
         title: 'Promovido para a Lista de Confirmados! ⚽',
         message: `${target.user.name} foi promovido para os confirmados pela diretoria.`,
@@ -699,6 +761,14 @@ export const MatchService = {
       window.dispatchEvent(new Event('storage'));
     }
 
+    const match = this.getMatchById(matchId);
+    const gid = match?.groupId || GroupService.getActiveGroupId() || '';
+    await NotificationService.notifyGroup(gid, {
+      type: 'match_updated',
+      title: 'Lista de presenca atualizada',
+      message: `${target.user.name} foi movido para a fila de espera pela diretoria.`,
+      data: { matchId, userId: target.userId, userName: target.user.name },
+    });
     return target;
   },
 
@@ -759,7 +829,7 @@ export const MatchService = {
 
     try {
       const gid = groupId || GroupService.getActiveGroupId() || '';
-      NotificationService.addNotification(gid, {
+      void NotificationService.notifyGroup(gid, {
         type: 'attendance_confirmed',
         title: 'Novo Convidado na Lista 🎟️',
         message: `${hostUser.name} adicionou o convidado ${guestData.name} (${guestData.position.toUpperCase()}) na lista da pelada.`,
@@ -789,7 +859,7 @@ export const MatchService = {
     let promotedUser: UserProfile | undefined;
     let promotedId: string | undefined;
     if (wasConfirmed) {
-      const waitlistCandidate = attendances.find((a) => a.status === 'waitlist' && a.id !== targetId);
+      const waitlistCandidate = attendances.find((a) => a.status === 'waitlist' && a.id !== targetId && !a.isFinancialBlocked);
       if (waitlistCandidate) {
         waitlistCandidate.status = 'confirmed';
         promotedUser = waitlistCandidate.user;
@@ -825,6 +895,17 @@ export const MatchService = {
       window.dispatchEvent(new Event('storage'));
     }
 
+    const match = this.getMatchById(matchId);
+    const gid = match?.groupId || GroupService.getActiveGroupId() || '';
+    await NotificationService.notifyGroup(gid, {
+      type: 'match_updated',
+      title: 'Lista de presenca atualizada',
+      message: promotedUser
+        ? `${target.user.name} foi removido e ${promotedUser.name} entrou nos confirmados.`
+        : `${target.user.name} foi removido da lista pela diretoria.`,
+      data: { matchId, userId: target.userId, userName: target.user.name },
+    });
+
     return { success: true, promotedUser };
   },
 
@@ -838,7 +919,7 @@ export const MatchService = {
 
     let promotedUser: UserProfile | undefined;
     if (wasConfirmed) {
-      const waitlistCandidate = attendances.find((a) => a.status === 'waitlist');
+      const waitlistCandidate = attendances.find((a) => a.status === 'waitlist' && !a.isFinancialBlocked);
       if (waitlistCandidate) {
         waitlistCandidate.status = 'confirmed';
         promotedUser = waitlistCandidate.user;
@@ -874,7 +955,7 @@ export const MatchService = {
     let promotedUser: UserProfile | undefined;
     let promotedId: string | undefined;
     if (wasConfirmed) {
-      const waitlistCandidate = attendances.find((a) => a.status === 'waitlist');
+      const waitlistCandidate = attendances.find((a) => a.status === 'waitlist' && !a.isFinancialBlocked);
       if (waitlistCandidate) {
         waitlistCandidate.status = 'confirmed';
         promotedUser = waitlistCandidate.user;
@@ -910,6 +991,16 @@ export const MatchService = {
       window.dispatchEvent(new Event('storage'));
     }
 
+    const match = this.getMatchById(matchId);
+    const gid = match?.groupId || GroupService.getActiveGroupId() || '';
+    await NotificationService.notifyGroup(gid, {
+      type: 'match_updated',
+      title: 'Lista de presenca atualizada',
+      message: promotedUser
+        ? `${user.name} cancelou a presenca e ${promotedUser.name} foi promovido para os confirmados.`
+        : `${user.name} cancelou a presenca.`,
+      data: { matchId, userId: targetUserId, userName: user.name },
+    });
     return { promotedUser };
   },
 
@@ -943,7 +1034,7 @@ export const MatchService = {
 
       try {
         const gid = groupId || GroupService.getActiveGroupId() || '';
-        NotificationService.addNotification(gid, {
+        void NotificationService.notifyGroup(gid, {
           type: 'player_arrived',
           title: 'Chegada ao Campo ⚽',
           message: `${target.user.name} chegou ao campo (Ordem de chegada #${order})!`,

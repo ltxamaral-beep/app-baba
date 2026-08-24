@@ -163,6 +163,20 @@ CREATE TABLE match_attendances (
     UNIQUE(match_id, user_id)
 );
 
+CREATE TABLE notifications (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    group_name TEXT,
+    recipient_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    actor_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    message TEXT NOT NULL,
+    data JSONB NOT NULL DEFAULT '{}'::jsonb,
+    read BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
 -- ========================================================================
 -- 8. TABELAS DE TIMES DO SORTEIO
 -- ========================================================================
@@ -204,6 +218,8 @@ CREATE TABLE player_ratings (
 CREATE INDEX IF NOT EXISTS idx_members_group ON group_members(group_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_group ON financial_transactions(group_id);
 CREATE INDEX IF NOT EXISTS idx_attendance_match ON match_attendances(match_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_recipient_created ON notifications(recipient_user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notifications_group ON notifications(group_id);
 CREATE INDEX IF NOT EXISTS idx_ratings_player ON player_ratings(rated_user_id);
 
 -- ========================================================================
@@ -215,6 +231,7 @@ ALTER TABLE group_members ENABLE ROW LEVEL SECURITY;
 ALTER TABLE financial_transactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE matches ENABLE ROW LEVEL SECURITY;
 ALTER TABLE match_attendances ENABLE ROW LEVEL SECURITY;
+ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE match_teams ENABLE ROW LEVEL SECURITY;
 ALTER TABLE match_team_players ENABLE ROW LEVEL SECURITY;
 ALTER TABLE player_ratings ENABLE ROW LEVEL SECURITY;
@@ -226,6 +243,7 @@ DROP POLICY IF EXISTS "Permitir tudo group_members" ON group_members;
 DROP POLICY IF EXISTS "Permitir tudo financial_transactions" ON financial_transactions;
 DROP POLICY IF EXISTS "Permitir tudo matches" ON matches;
 DROP POLICY IF EXISTS "Permitir tudo match_attendances" ON match_attendances;
+DROP POLICY IF EXISTS "Permitir tudo notifications" ON notifications;
 DROP POLICY IF EXISTS "Permitir tudo match_teams" ON match_teams;
 DROP POLICY IF EXISTS "Permitir tudo match_team_players" ON match_team_players;
 DROP POLICY IF EXISTS "Permitir tudo player_ratings" ON player_ratings;
@@ -236,6 +254,7 @@ CREATE POLICY "Permitir tudo group_members" ON group_members FOR ALL USING (true
 CREATE POLICY "Permitir tudo financial_transactions" ON financial_transactions FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Permitir tudo matches" ON matches FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Permitir tudo match_attendances" ON match_attendances FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Permitir tudo notifications" ON notifications FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Permitir tudo match_teams" ON match_teams FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Permitir tudo match_team_players" ON match_team_players FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Permitir tudo player_ratings" ON player_ratings FOR ALL USING (true) WITH CHECK (true);
@@ -282,4 +301,3 @@ DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
     AFTER INSERT ON auth.users
     FOR EACH ROW EXECUTE PROCEDURE public.handle_new_auth_user();
-

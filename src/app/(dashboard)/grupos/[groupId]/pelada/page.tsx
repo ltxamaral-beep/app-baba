@@ -253,11 +253,15 @@ export default function PeladaHubPage({ params }: { params: { groupId: string } 
     await loadData();
   };
 
-  const handlePromoteToConfirmed = (attendanceId: string, athleteName: string) => {
+  const handlePromoteToConfirmed = async (attendanceId: string, athleteName: string) => {
     if (!activeMatch) return;
-    MatchService.promoteWaitlistToConfirmed(activeMatch.id, attendanceId);
+    const promoted = await MatchService.promoteWaitlistToConfirmed(activeMatch.id, attendanceId);
+    if (!promoted) {
+      showToast('Somente a diretoria pode liberar um atleta com debito.', 'error');
+      return;
+    }
     showToast(`⚽ ${athleteName} foi promovido para os confirmados!`, 'success');
-    loadData();
+    await loadData();
   };
 
   const handleDemoteToWaitlist = (attendanceId: string, athleteName: string) => {
@@ -904,6 +908,11 @@ export default function PeladaHubPage({ params }: { params: { groupId: string } 
                             Convidado de {att.invitedByName}
                           </span>
                         )}
+                        {att.isFinancialBlocked && (
+                          <span className="block text-[9px] text-rose-400 font-bold mt-0.5">
+                            Debito pendente - requer liberacao
+                          </span>
+                        )}
                       </div>
                       <div className="flex items-center gap-1.5">
                         {isDirector && (
@@ -914,7 +923,7 @@ export default function PeladaHubPage({ params }: { params: { groupId: string } 
                               className="inline-flex items-center gap-1 bg-[#00b49f]/15 hover:bg-[#00b49f]/30 border border-[#00b49f]/40 text-[#00b49f] font-bold px-2 py-1 rounded-lg text-[10px] transition-all active:scale-95 shadow-sm"
                               title="Promover para a lista de confirmados"
                             >
-                              <Check className="w-3 h-3" /> Confirmar
+                              <Check className="w-3 h-3" /> {att.isFinancialBlocked ? 'Liberar' : 'Confirmar'}
                             </button>
                             <button
                               type="button"

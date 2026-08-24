@@ -194,9 +194,14 @@ export default function AttendancePage({ params }: { params: { groupId: string; 
     setAttendances(MatchService.getAttendances(match.id));
   };
 
-  const handlePromoteToConfirmed = (attendanceId: string, athleteName: string) => {
+  const handlePromoteToConfirmed = async (attendanceId: string, athleteName: string) => {
     if (!match) return;
-    MatchService.promoteWaitlistToConfirmed(match.id, attendanceId);
+    const promoted = await MatchService.promoteWaitlistToConfirmed(match.id, attendanceId);
+    if (!promoted) {
+      setNotification('Somente a diretoria pode liberar um atleta com debito.');
+      setTimeout(() => setNotification(null), 4000);
+      return;
+    }
     setAttendances(MatchService.getAttendances(match.id));
     setNotification(`⚽ ${athleteName} foi promovido para a lista de confirmados pela diretoria!`);
     setTimeout(() => setNotification(null), 4000);
@@ -410,14 +415,31 @@ export default function AttendancePage({ params }: { params: { groupId: string; 
             </div>
           </div>
         ) : isBlocked ? (
-          <div className="bg-rose-950/30 border border-rose-900/50 rounded-xl p-4 flex items-start gap-3">
-            <AlertTriangle className="w-5 h-5 text-rose-400 flex-shrink-0 mt-0.5" />
+          <div className="space-y-3">
+            <div className="bg-rose-950/30 border border-rose-900/50 rounded-xl p-4 flex items-start gap-3">
+              <AlertTriangle className="w-5 h-5 text-rose-400 flex-shrink-0 mt-0.5" />
             <div>
               <p className="text-xs font-bold text-rose-300">Você está bloqueado de jogar nesta pelada!</p>
               <p className="text-[11px] text-rose-400/90 mt-0.5">
                 Identificamos mensalidade ou diária em atraso. Entre na aba <Link href={`/grupos/${params.groupId}/financas`} className="underline font-bold">Finanças</Link> ou procure um ADM para dar a baixa e liberar sua vaga.
               </p>
             </div>
+            </div>
+            {isMyAttendanceWaitlist ? (
+              <button
+                onClick={handleCancel}
+                className="bg-rose-500/20 hover:bg-rose-500/30 text-rose-400 border border-rose-500/40 font-bold px-4 py-2.5 rounded-xl text-xs flex items-center gap-1.5"
+              >
+                <UserX className="w-4 h-4" /> Cancelar Minha Presenca
+              </button>
+            ) : (
+              <button
+                onClick={handleConfirm}
+                className="bg-amber-400 hover:bg-amber-300 text-slate-950 font-black px-6 py-2.5 rounded-xl text-xs flex items-center gap-2"
+              >
+                <Clock className="w-4 h-4" /> Entrar na Fila de Espera
+              </button>
+            )}
           </div>
         ) : (
           <div className="flex flex-wrap items-center gap-3">
@@ -596,6 +618,11 @@ export default function AttendancePage({ params }: { params: { groupId: string; 
                       <p className="text-[11px] text-slate-400 capitalize">
                         {att.user.mainPosition} • Suplente #{idx + 1}
                       </p>
+                      {att.isFinancialBlocked && (
+                        <p className="text-[10px] text-rose-400 font-bold mt-0.5">
+                          Debito pendente - requer liberacao
+                        </p>
+                      )}
                     </div>
                   </div>
 
@@ -607,7 +634,7 @@ export default function AttendancePage({ params }: { params: { groupId: string; 
                         className="inline-flex items-center gap-1 bg-[#00b49f]/15 hover:bg-[#00b49f]/30 border border-[#00b49f]/40 text-[#00b49f] font-bold px-2 py-1 rounded-lg text-[10px] transition-all active:scale-95 shadow-sm"
                         title="Promover para a lista de confirmados"
                       >
-                        <CheckCircle2 className="w-3 h-3" /> Confirmar
+                        <CheckCircle2 className="w-3 h-3" /> {att.isFinancialBlocked ? 'Liberar' : 'Confirmar'}
                       </button>
                     )}
                     <span className="text-[10px] text-amber-400 font-semibold bg-amber-900/40 px-2 py-0.5 rounded">

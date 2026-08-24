@@ -171,7 +171,8 @@ export interface MatchTeam {
   players: MatchTeamPlayer[];
 }
 
-export type NotificationType = 
+export type NotificationType =
+  | 'match_updated'
   | 'member_request'        // Solicitação de entrada no grupo
   | 'member_approved'       // Solicitação aprovada
   | 'match_opened'          // Abertura de lista de presença da pelada
@@ -184,6 +185,8 @@ export interface AppNotification {
   id: string;
   groupId: string;
   groupName?: string;
+  recipientUserId?: string;
+  actorUserId?: string;
   type: NotificationType;
   title: string;
   message: string;
