@@ -5,39 +5,32 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { 
   Lock, 
-  ShieldCheck, 
+  Mail, 
   ArrowRight, 
   AlertCircle,
   Trophy
 } from 'lucide-react';
 import { GoogleAuthButton } from '@/components/auth/GoogleAuthButton';
 import { AuthService } from '@/lib/services/auth-service';
-import { maskCPF } from '@/lib/utils/masks';
 
 export default function LoginPage() {
   const router = useRouter();
-  const [cpf, setCpf] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handleCpfChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = maskCPF(e.target.value);
-    setCpf(val);
-    if (error) setError('');
-  };
-
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanCpf = cpf.replace(/\D/g, '');
+    const cleanEmail = email.trim().toLowerCase();
 
-    if (!cleanCpf) {
-      setError('Informe seu CPF.');
+    if (!cleanEmail) {
+      setError('Informe seu e-mail.');
       return;
     }
 
-    if (cleanCpf.length < 11) {
-      setError('CPF incompleto. Digite os 11 números.');
+    if (!cleanEmail.includes('@') || !cleanEmail.includes('.')) {
+      setError('Informe um e-mail válido.');
       return;
     }
 
@@ -50,7 +43,7 @@ export default function LoginPage() {
     setError('');
 
     try {
-      const result = await AuthService.signInWithCpf(cpf, password);
+      const result = await AuthService.signInWithEmail(cleanEmail, password);
       if (!result.success) {
         setError(result.error || 'Falha ao autenticar.');
         setLoading(false);
@@ -98,29 +91,28 @@ export default function LoginPage() {
         <div className="relative flex py-1 items-center">
           <div className="flex-grow border-t border-[#182737]"></div>
           <span className="flex-shrink mx-4 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-            Ou acesse com seu CPF
+            Ou acesse com seu E-mail
           </span>
           <div className="flex-grow border-t border-[#182737]"></div>
         </div>
 
-        {/* Formulário CPF + Senha */}
+        {/* Formulário Email + Senha */}
         <form onSubmit={handleLogin} className="space-y-4">
           <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <label className="block text-xs font-semibold text-slate-300 uppercase">
-                CPF
-              </label>
-              <span className="text-[10px] text-[#00b49f] font-mono font-medium">Apenas números</span>
-            </div>
+            <label className="block text-xs font-semibold text-slate-300 uppercase mb-1.5">
+              E-mail
+            </label>
             <div className="relative">
-              <ShieldCheck className="absolute left-3.5 top-3 w-4 h-4 text-slate-500" />
+              <Mail className="absolute left-3.5 top-3 w-4 h-4 text-slate-500" />
               <input
-                type="text"
-                value={cpf}
-                maxLength={14}
-                onChange={handleCpfChange}
-                placeholder="000.000.000-00"
-                className="w-full bg-[#121e2b] border border-[#182737] rounded-xl pl-10 pr-4 py-2.5 text-sm text-white font-mono placeholder-slate-500 focus:outline-none focus:border-[#00b49f] focus:ring-1 focus:ring-[#00b49f] transition-colors"
+                type="email"
+                value={email}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  if (error) setError('');
+                }}
+                placeholder="seuemail@exemplo.com"
+                className="w-full bg-[#121e2b] border border-[#182737] rounded-xl pl-10 pr-4 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-[#00b49f] focus:ring-1 focus:ring-[#00b49f] transition-colors"
               />
             </div>
           </div>
@@ -162,7 +154,7 @@ export default function LoginPage() {
               </span>
             ) : (
               <>
-                Entrar com CPF <ArrowRight className="w-4 h-4" />
+                Entrar no App <ArrowRight className="w-4 h-4" />
               </>
             )}
           </button>

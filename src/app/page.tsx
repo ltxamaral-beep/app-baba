@@ -42,8 +42,8 @@ export default function HomePage() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');
 
-  // --- ESTADO DO LOGIN ---
-  const [loginCpf, setLoginCpf] = useState('');
+  // --- ESTADO DO LOGIN COM EMAIL ---
+  const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [loginLoading, setLoginLoading] = useState(false);
@@ -97,18 +97,18 @@ export default function HomePage() {
     weightKg: '',
   });
 
-  // HANDLER LOGIN POR CPF
+  // HANDLER LOGIN POR EMAIL
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanCpf = loginCpf.replace(/\D/g, '');
+    const cleanEmail = loginEmail.trim().toLowerCase();
 
-    if (!cleanCpf) {
-      setLoginError('Informe seu CPF.');
+    if (!cleanEmail) {
+      setLoginError('Informe seu e-mail.');
       return;
     }
 
-    if (cleanCpf.length < 11) {
-      setLoginError('CPF incompleto. Digite os 11 números.');
+    if (!cleanEmail.includes('@') || !cleanEmail.includes('.')) {
+      setLoginError('Informe um e-mail válido.');
       return;
     }
 
@@ -121,7 +121,7 @@ export default function HomePage() {
     setLoginError('');
 
     try {
-      const result = await AuthService.signInWithCpf(loginCpf, loginPassword);
+      const result = await AuthService.signInWithEmail(cleanEmail, loginPassword);
       if (!result.success) {
         setLoginError(result.error || 'Credenciais inválidas.');
         setLoginLoading(false);
@@ -307,7 +307,7 @@ export default function HomePage() {
                 : 'text-slate-400 hover:text-white'
             }`}
           >
-            <LogIn className="w-4 h-4" /> Entrar com CPF
+            <LogIn className="w-4 h-4" /> Entrar no App
           </button>
           <button
             onClick={() => {
@@ -327,7 +327,7 @@ export default function HomePage() {
         {/* Card do Formulário */}
         <div className="bg-[#0d1721] border border-[#182737] rounded-3xl shadow-2xl p-6 sm:p-8 space-y-5">
           
-          {/* TAB 1: LOGIN */}
+          {/* TAB 1: LOGIN POR EMAIL */}
           {activeTab === 'login' && (
             <div className="space-y-5">
               <GoogleAuthButton label="Continuar com o Google" />
@@ -335,31 +335,27 @@ export default function HomePage() {
               <div className="relative flex py-1 items-center">
                 <div className="flex-grow border-t border-[#182737]"></div>
                 <span className="flex-shrink mx-4 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                  Ou acesse com seu CPF
+                  Ou acesse com seu E-mail
                 </span>
                 <div className="flex-grow border-t border-[#182737]"></div>
               </div>
 
               <form onSubmit={handleLoginSubmit} className="space-y-4">
                 <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <label className="block text-xs font-semibold text-slate-300 uppercase">
-                      CPF
-                    </label>
-                    <span className="text-[10px] text-[#00b49f] font-mono">Apenas números</span>
-                  </div>
+                  <label className="block text-xs font-semibold text-slate-300 uppercase mb-1.5">
+                    E-mail
+                  </label>
                   <div className="relative">
-                    <ShieldCheck className="absolute left-3.5 top-3 w-4 h-4 text-slate-500" />
+                    <Mail className="absolute left-3.5 top-3 w-4 h-4 text-slate-500" />
                     <input
-                      type="text"
-                      value={loginCpf}
-                      maxLength={14}
+                      type="email"
+                      value={loginEmail}
                       onChange={(e) => {
-                        setLoginCpf(maskCPF(e.target.value));
+                        setLoginEmail(e.target.value);
                         if (loginError) setLoginError('');
                       }}
-                      placeholder="000.000.000-00"
-                      className="w-full bg-[#121e2b] border border-[#182737] rounded-xl pl-10 pr-4 py-2.5 text-sm text-white font-mono placeholder-slate-500 focus:outline-none focus:border-[#00b49f]"
+                      placeholder="seuemail@exemplo.com"
+                      className="w-full bg-[#121e2b] border border-[#182737] rounded-xl pl-10 pr-4 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-[#00b49f]"
                     />
                   </div>
                 </div>
