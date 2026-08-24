@@ -133,6 +133,14 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
   const [currentMember, setCurrentMember] = useState<GroupMember | undefined>(undefined);
 
   const loadData = async () => {
+    let g = GroupService.getGroupById(groupId);
+    if (!g && isSupabaseConfigured && supabase) {
+      g = await GroupService.findGroupByInviteCodeAsync(groupId);
+    }
+    if (!g) {
+      await GroupService.syncAllWithCloud();
+    }
+
     const tList = FinanceService.getTransactions(groupId);
     const mList = GroupService.getMembers(groupId);
     const member = GroupService.getMemberInGroup(groupId);

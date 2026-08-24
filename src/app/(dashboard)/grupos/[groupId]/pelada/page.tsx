@@ -96,61 +96,35 @@ export default function PeladaHubPage({ params }: { params: { groupId: string } 
     const user = UserService.getCurrentUser();
     setCurrentUser(user);
 
-    const g = GroupService.getGroupById(groupId) || GroupService.getGroups()[0];
+    // 1. Resolve o grupo por ID local ou busca na nuvem (Supabase)
+    let g = GroupService.getGroupById(groupId);
+    if (!g && isSupabaseConfigured && supabase) {
+      g = await GroupService.findGroupByInviteCodeAsync(groupId);
+    }
+    if (!g) {
+      await GroupService.syncAllWithCloud();
+      g = GroupService.getGroupById(groupId) || GroupService.getGroups()[0];
+    }
+
     if (g) {
       setGroup(g);
       const member = GroupService.getMemberInGroup(g.id, user.id);
       setCurrentMember(member || null);
 
+      // 2. Busca partidas locais
       const mList = MatchService.getMatches(g.id);
       setMatches(mList);
 
-      if (mList.length > 0) {
-        const latest = mList[0];
-        setActiveMatch(latest);
-        const attList = MatchService.getAttendances(latest.id);
-        setAttendances(attList);
-
-        // Carrega ou inicializa súmula
-        const savedStats = MatchStatsService.getMatchStats(latest.id);
-        if (savedStats.length > 0) {
-          setPlayerStats(savedStats);
-        } else {
-          // Preenche com os confirmados
-          const initialStats: PlayerMatchStat[] = attList
-            .filter((a) => a.status === 'confirmed' || a.status === 'present')
-            .map((a) => ({
-              id: `stat-${a.userId}-${latest.id}`,
-              matchId: latest.id,
-              groupId: g.id,
-              userId: a.userId,
-              userName: a.user.name,
-              userPosition: a.user.mainPosition,
-              goals: 0,
-              assists: 0,
-              tackles: 0,
-              saves: 0,
-              yellowCards: 0,
-              redCards: 0,
-              isMvp: false,
-              createdAt: new Date().toISOString(),
-            }));
-          setPlayerStats(initialStats);
-        }
-      } else {
-        const today = new Date().toISOString().split('T')[0];
-        setOpenMatchData((prev) => ({
-          ...prev,
-          matchDate: today,
-          startTime: g.matchTime || '20:00',
-          maxPlayers: g.maxSlots || 24,
-          deadlineDate: today,
-          deadlineTime: '12:00',
-          hasDeadline: true,
-        }));
+      const localOpen = mList.find((m) => m.status === 'scheduled');
+      if (localOpen) {
+        setActiveMatch(localOpen);
+        setAttendances(MatchService.getAttendances(localOpen.id));
+      } else if (mList.length > 0) {
+        setActiveMatch(mList[0]);
+        setAttendances(MatchService.getAttendances(mList[0].id));
       }
 
-      // Sincroniza em segundo plano com a nuvem (Supabase)
+      // 3. Sincroniza partidas e presenças com o Supabase em segundo plano
       try {
         const cloudMatches = await MatchService.syncMatchesFromCloud(g.id);
         if (cloudMatches && cloudMatches.length > 0) {
