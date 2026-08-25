@@ -59,7 +59,15 @@ import {
   Edit3
 } from 'lucide-react';
 
-export default function PeladaHubPage({ params }: { params: { groupId: string } }) {
+type PeladaTab = 'presenca' | 'sorteio' | 'votacao' | 'sumula' | 'rankings';
+
+export default function PeladaHubPage({
+  params,
+  searchParams,
+}: {
+  params: { groupId: string };
+  searchParams?: { tab?: string };
+}) {
   const rawGroupId = params?.groupId;
   const groupId = (rawGroupId && rawGroupId !== 'group-1') 
     ? rawGroupId 
@@ -72,7 +80,10 @@ export default function PeladaHubPage({ params }: { params: { groupId: string } 
   const [attendances, setAttendances] = useState<MatchAttendance[]>([]);
   
   // Abas
-  const [activeTab, setActiveTab] = useState<'presenca' | 'sorteio' | 'votacao' | 'sumula' | 'rankings'>('presenca');
+  const initialTab: PeladaTab = ['presenca', 'sorteio', 'votacao', 'sumula', 'rankings'].includes(searchParams?.tab || '')
+    ? searchParams!.tab as PeladaTab
+    : 'presenca';
+  const [activeTab, setActiveTab] = useState<PeladaTab>(initialTab);
   
   // Sorteio
   const [teams, setTeams] = useState<MatchTeam[]>([]);

@@ -10,7 +10,6 @@ import {
 } from '@/lib/services/storage-service';
 import { Group, GroupMember, GroupRole, UserPosition, DominantFoot } from '@/types';
 import { showToast } from '@/components/ui/Toast';
-import { ProBadge } from '@/components/group/ProBadge';
 import { 
   Users, 
   UserCheck, 
@@ -18,12 +17,10 @@ import {
   ChevronRight, 
   History, 
   User, 
-  Bell, 
   Edit3, 
   Star, 
   Calendar, 
   BarChart3, 
-  Sliders, 
   DollarSign, 
   ArrowLeftRight, 
   Sparkles, 
@@ -58,8 +55,6 @@ export default function GroupSettingsPage({ params, searchParams }: { params: { 
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
   const [ratingsModalOpen, setRatingsModalOpen] = useState(false);
   const [historyModalOpen, setHistoryModalOpen] = useState(false);
-  const [proModalOpen, setProModalOpen] = useState(false);
-  const [proFeatureTitle, setProFeatureTitle] = useState('');
   const [leaveModalOpen, setLeaveModalOpen] = useState(false);
   const [manualPlayerModalOpen, setManualPlayerModalOpen] = useState(false);
   const [membersModalOpen, setMembersModalOpen] = useState(searchParams?.gerenciar === 'membros');
@@ -229,6 +224,21 @@ export default function GroupSettingsPage({ params, searchParams }: { params: { 
     await loadData();
   };
 
+  const handleRemoveMember = async (member: GroupMember) => {
+    if (!group || member.role === 'presidente' || member.userId === currentMember?.userId) return;
+    const confirmed = window.confirm(
+      `Remover ${member.user.name} do grupo? A presenca dele nas listas futuras tambem sera removida. O historico financeiro sera preservado.`,
+    );
+    if (!confirmed) return;
+    const result = await GroupService.removeMember(group.id, member.id);
+    if (!result.success) {
+      showToast(result.error || 'Nao foi possivel remover o membro.', 'error');
+      return;
+    }
+    showToast(`${member.user.name} foi removido do grupo.`, 'success');
+    await loadData();
+  };
+
   const handleCopyLink = () => {
     if (!group) return;
     const origin = typeof window !== 'undefined' ? window.location.origin : '';
@@ -251,7 +261,7 @@ export default function GroupSettingsPage({ params, searchParams }: { params: { 
   const [waitlistModalOpen, setWaitlistModalOpen] = useState(false);
   const [recurrenceModalOpen, setRecurrenceModalOpen] = useState(false);
 
-  const handleOpenProFeature = (featureName: string, targetRoute?: string) => {
+  const handleOpenFeature = (featureName: string, targetRoute?: string) => {
     if (targetRoute && group) {
       router.push(targetRoute.replace('[groupId]', group.id));
       return;
@@ -278,19 +288,7 @@ export default function GroupSettingsPage({ params, searchParams }: { params: { 
   return (
     <div className="space-y-4 pb-12 max-w-lg mx-auto select-none">
       
-      {/* 1. Banner Superior: Gestão do Baba */}
-      <Link
-        href={group ? `/grupos/${group.id}/pelada` : '/dashboard'}
-        className="w-full bg-[#0d4f48] hover:bg-[#105d55] border border-[#147067] rounded-2xl p-3.5 flex items-center justify-between transition-all shadow-md active:scale-[0.99]"
-      >
-        <div className="flex items-center gap-3">
-          <ProBadge size="md" />
-          <span className="font-bold text-white text-base tracking-wide">Painel Oficial do Baba</span>
-        </div>
-        <ChevronRight className="w-5 h-5 text-slate-300" />
-      </Link>
-
-      {/* 2. Banner: Histórico de Atividades */}
+      {/* Histórico de Atividades */}
       <button
         onClick={() => setHistoryModalOpen(true)}
         className="w-full bg-[#341d24] hover:bg-[#42242d] border border-[#4d2935] rounded-xl p-3.5 flex items-center justify-between transition-all shadow-md active:scale-[0.99]"
@@ -307,7 +305,7 @@ export default function GroupSettingsPage({ params, searchParams }: { params: { 
         <h3 className="text-xs font-semibold text-slate-400 px-1 mb-2">Jogadores</h3>
         <div className="bg-[#121e2b] border border-[#182737] rounded-2xl overflow-hidden divide-y divide-[#182737] shadow-sm">
           
-          {/* Linha Jogadores */}
+          {/* Membros e solicitacoes em um unico destino */}
           <button
             type="button"
             onClick={() => setMembersModalOpen(true)}
@@ -315,21 +313,14 @@ export default function GroupSettingsPage({ params, searchParams }: { params: { 
           >
             <div className="flex items-center gap-3">
               <Users className="w-5 h-5 text-slate-300" />
-              <span className="text-sm font-semibold text-white">Jogadores</span>
+              <span className="text-sm font-semibold text-white">Membros e solicitações</span>
             </div>
-            <span className="text-sm font-bold text-slate-300">{activePlayersCount}</span>
-          </button>
-
-          {/* Linha Solicitações */}
-          <button
-            onClick={() => setMembersModalOpen(true)}
-            className="w-full p-3.5 flex items-center justify-between hover:bg-[#182737]/60 transition-colors text-left"
-          >
-            <div className="flex items-center gap-3">
-              <UserCheck className="w-5 h-5 text-slate-300" />
-              <span className="text-sm font-semibold text-white">Solicitações</span>
+            <div className="flex items-center gap-2 text-xs font-bold">
+              <span className="text-slate-300">{activePlayersCount} membros</span>
+              {pendingRequestsCount > 0 && (
+                <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-amber-300">{pendingRequestsCount} pendente(s)</span>
+              )}
             </div>
-            <span className="text-sm font-bold text-slate-300">{pendingRequestsCount}</span>
           </button>
         </div>
 
@@ -361,16 +352,6 @@ export default function GroupSettingsPage({ params, searchParams }: { params: { 
             <ChevronRight className="w-5 h-5 text-slate-400" />
           </Link>
 
-          <button
-            onClick={() => showToast('Suas notificações estão sincronizadas.', 'info')}
-            className="w-full p-3.5 flex items-center justify-between hover:bg-[#182737]/60 transition-colors text-left"
-          >
-            <div className="flex items-center gap-3">
-              <Bell className="w-5 h-5 text-slate-300" />
-              <span className="text-sm font-semibold text-white">Notificações</span>
-            </div>
-            <ChevronRight className="w-5 h-5 text-slate-400" />
-          </button>
         </div>
       </div>
 
@@ -419,33 +400,21 @@ export default function GroupSettingsPage({ params, searchParams }: { params: { 
         <h3 className="text-xs font-semibold text-slate-400 px-1 mb-2">Ferramentas & Inteligência</h3>
         <div className="bg-[#121e2b] border border-[#182737] rounded-2xl overflow-hidden divide-y divide-[#182737] shadow-sm">
           
-          {/* Ranking */}
+          {/* Rankings e destaques compartilham a mesma tela */}
           <button
-            onClick={() => handleOpenProFeature('Ranking', group ? `/grupos/${group.id}/resenha` : undefined)}
+            onClick={() => handleOpenFeature('Ranking', group ? `/grupos/${group.id}/resenha` : undefined)}
             className="w-full p-3.5 flex items-center justify-between hover:bg-[#182737]/60 transition-colors text-left"
           >
             <div className="flex items-center gap-3">
               <BarChart3 className="w-5 h-5 text-slate-300" />
-              <span className="text-sm font-semibold text-white">Rankings & Artilharia</span>
-            </div>
-            <ChevronRight className="w-5 h-5 text-slate-400" />
-          </button>
-
-          {/* Destaques */}
-          <button
-            onClick={() => handleOpenProFeature('Destaques', group ? `/grupos/${group.id}/resenha` : undefined)}
-            className="w-full p-3.5 flex items-center justify-between hover:bg-[#182737]/60 transition-colors text-left"
-          >
-            <div className="flex items-center gap-3">
-              <Sliders className="w-5 h-5 text-slate-300" />
-              <span className="text-sm font-semibold text-white">Destaques da Rodada</span>
+              <span className="text-sm font-semibold text-white">Rankings, artilharia e destaques</span>
             </div>
             <ChevronRight className="w-5 h-5 text-slate-400" />
           </button>
 
           {/* Financeiro */}
           <button
-            onClick={() => handleOpenProFeature('Financeiro', group ? `/grupos/${group.id}/financas` : undefined)}
+            onClick={() => handleOpenFeature('Financeiro', group ? `/grupos/${group.id}/financas` : undefined)}
             className="w-full p-3.5 flex items-center justify-between hover:bg-[#182737]/60 transition-colors text-left"
           >
             <div className="flex items-center gap-3">
@@ -457,7 +426,7 @@ export default function GroupSettingsPage({ params, searchParams }: { params: { 
 
           {/* Sorteio */}
           <button
-            onClick={() => handleOpenProFeature('Sorteio Equilibrado', group ? `/grupos/${group.id}/pelada` : undefined)}
+            onClick={() => handleOpenFeature('Sorteio Equilibrado', group ? `/grupos/${group.id}/pelada?tab=sorteio` : undefined)}
             className="w-full p-3.5 flex items-center justify-between hover:bg-[#182737]/60 transition-colors text-left"
           >
             <div className="flex items-center gap-3">
@@ -469,7 +438,7 @@ export default function GroupSettingsPage({ params, searchParams }: { params: { 
 
           {/* Classificar jogadores */}
           <button
-            onClick={() => handleOpenProFeature('Classificação Inteligente')}
+            onClick={() => handleOpenFeature('Classificação Inteligente')}
             className="w-full p-3.5 flex items-center justify-between hover:bg-[#182737]/60 transition-colors text-left"
           >
             <div className="flex items-center gap-3">
@@ -481,7 +450,7 @@ export default function GroupSettingsPage({ params, searchParams }: { params: { 
 
           {/* Fila de espera */}
           <button
-            onClick={() => handleOpenProFeature('Fila de Espera Inteligente')}
+            onClick={() => handleOpenFeature('Fila de Espera Inteligente')}
             className="w-full p-3.5 flex items-center justify-between hover:bg-[#182737]/60 transition-colors text-left"
           >
             <div className="flex items-center gap-3">
@@ -493,7 +462,7 @@ export default function GroupSettingsPage({ params, searchParams }: { params: { 
 
           {/* Recorrência */}
           <button
-            onClick={() => handleOpenProFeature('Recorrência e Automação')}
+            onClick={() => handleOpenFeature('Recorrência e Automação')}
             className="w-full p-3.5 flex items-center justify-between hover:bg-[#182737]/60 transition-colors text-left"
           >
             <div className="flex items-center gap-3">
@@ -577,19 +546,32 @@ export default function GroupSettingsPage({ params, searchParams }: { params: { 
                       </p>
                     </div>
                     {isDirector ? (
-                      <select
-                        value={member.role}
-                        disabled={member.role === 'presidente'}
-                        onChange={(e) => handleMemberRoleChange(member, e.target.value as GroupRole)}
-                        className="bg-[#121e2b] border border-[#263b50] rounded-lg px-3 py-2 text-xs font-bold text-white disabled:opacity-60"
-                      >
-                        <option value="presidente">Presidente</option>
-                        <option value="adm">Administrador</option>
-                        <option value="tesoureiro">Tesoureiro</option>
-                        <option value="associado">Associado</option>
-                        <option value="diarista">Diarista</option>
-                        <option value="goleiro">Goleiro</option>
-                      </select>
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={member.role}
+                          disabled={member.role === 'presidente'}
+                          onChange={(e) => handleMemberRoleChange(member, e.target.value as GroupRole)}
+                          className="bg-[#121e2b] border border-[#263b50] rounded-lg px-3 py-2 text-xs font-bold text-white disabled:opacity-60"
+                        >
+                          <option value="presidente">Presidente</option>
+                          <option value="adm">Administrador</option>
+                          <option value="tesoureiro">Tesoureiro</option>
+                          <option value="associado">Associado</option>
+                          <option value="diarista">Diarista</option>
+                          <option value="goleiro">Goleiro</option>
+                        </select>
+                        {member.role !== 'presidente' && member.userId !== currentMember?.userId && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveMember(member)}
+                            title={`Remover ${member.user.name}`}
+                            aria-label={`Remover ${member.user.name} do grupo`}
+                            className="rounded-lg border border-rose-800 bg-rose-950/60 p-2 text-rose-300 transition-colors hover:bg-rose-900 hover:text-white"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        )}
+                      </div>
                     ) : (
                       <span className="text-xs font-bold text-emerald-300 capitalize">{member.role}</span>
                     )}

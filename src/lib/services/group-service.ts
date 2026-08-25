@@ -1076,20 +1076,28 @@ export const GroupService = {
       return { success: false, error: 'O Presidente Titular não pode ser excluído. Transfira a presidência antes.' };
     }
 
+    if (!isSupabaseConfigured || !supabase) {
+      return { success: false, error: 'O servidor nao esta configurado. O membro foi mantido.' };
+    }
+    try {
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError || !sessionData.session?.access_token) {
+        return { success: false, error: 'Sua sessao expirou. Entre novamente no aplicativo.' };
+      }
+      const response = await fetch(`/api/groups/${groupId}/members/${target.id}`, {
+        method: 'DELETE',
+        cache: 'no-store',
+        headers: { Authorization: `Bearer ${sessionData.session.access_token}` },
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) return { success: false, error: payload.error || 'Nao foi possivel remover o membro.' };
+    } catch (err) {
+      console.warn('Erro ao remover membro no servidor:', err);
+      return { success: false, error: 'Falha de conexao. O membro foi mantido.' };
+    }
+
     const filtered = members.filter((m) => m.id !== target.id && m.userId !== target.userId);
     setStored(`members_${groupId}`, filtered);
-
-    if (isSupabaseConfigured && supabase) {
-      try {
-        if (isValidUUID(target.id)) {
-          await supabase.from('group_members').delete().eq('id', target.id);
-        } else if (isValidUUID(target.userId) && isValidUUID(groupId)) {
-          await supabase.from('group_members').delete().match({ group_id: groupId, user_id: target.userId });
-        }
-      } catch (err) {
-        console.warn('Erro ao remover membro no Supabase:', err);
-      }
-    }
 
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('members_updated', { detail: { groupId } }));
