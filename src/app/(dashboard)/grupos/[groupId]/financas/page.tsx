@@ -8,6 +8,7 @@ import {
 } from '@/lib/services/storage-service';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase/client';
 import { formatCurrency } from '@/lib/utils/masks';
+import { downloadFinancialStatementPdf } from '@/lib/utils/financial-statement-pdf';
 import { 
   FinancialTransaction, 
   GroupMember, 
@@ -48,7 +49,8 @@ import {
   Edit3,
   Trash2,
   Save,
-  BarChart3
+  BarChart3,
+  FileDown
 } from 'lucide-react';
 
 const CATEGORY_LABELS: Record<TransactionCategory, { label: string; icon: string; badgeColor: string }> = {
@@ -81,9 +83,9 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
   const [activeFilter, setActiveFilter] = useState<'all' | 'inadimplentes' | 'cartoes' | 'mensalidades' | 'diarias' | 'saldo_inicial' | 'expenses'>('all');
   
   // ---------------------------------------------------------------------------
-  // Filtro Temporal de Período (Mensal / Anual / Geral)
+  // Filtro Temporal de Período (Mensal / Anual)
   // ---------------------------------------------------------------------------
-  const [periodType, setPeriodType] = useState<FinancePeriodType>('all');
+  const [periodType, setPeriodType] = useState<FinancePeriodType>('monthly');
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
   const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);
 
@@ -136,6 +138,7 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
   const [customIsPaid, setCustomIsPaid] = useState(true);
 
   const [currentMember, setCurrentMember] = useState<GroupMember | undefined>(undefined);
+  const [exportingStatement, setExportingStatement] = useState(false);
 
   const loadData = async () => {
     let g = GroupService.getGroupById(groupId);
@@ -427,6 +430,26 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
     return `${MONTH_NAMES[selectedMonth - 1]} de ${selectedYear}`;
   }, [periodType, selectedMonth, selectedYear]);
 
+  const handleDownloadStatement = async () => {
+    if (periodType === 'all' || exportingStatement) return;
+    setExportingStatement(true);
+    try {
+      await downloadFinancialStatementPdf({
+        groupName: GroupService.getGroupById(groupId)?.name || 'Grupo',
+        periodLabel: currentPeriodLabel,
+        periodType,
+        year: selectedYear,
+        month: selectedMonth,
+        transactions: periodFilteredTransactions,
+      });
+      showToast('Extrato financeiro gerado em PDF.', 'success');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Nao foi possivel gerar o extrato em PDF.', 'error');
+    } finally {
+      setExportingStatement(false);
+    }
+  };
+
   return (
     <div className="space-y-6 pb-12 max-w-4xl mx-auto select-none">
       
@@ -490,7 +513,7 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
       )}
 
       {/* ========================================================================= */}
-      {/* SELETOR DE PERÍODO (MENSAL COM ESCOLHA DE MÊS, ANUAL COM ANO OU GERAL) */}
+      {/* SELETOR DE PERÍODO (MENSAL COM ESCOLHA DE MÊS OU ANUAL COM ANO) */}
       {/* ========================================================================= */}
       <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md">
         <div className="flex items-center gap-2">
@@ -528,17 +551,6 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
             >
               Anual
             </button>
-            <button
-              type="button"
-              onClick={() => setPeriodType('all')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                periodType === 'all'
-                  ? 'bg-[#00b49f] text-slate-950 shadow'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              Geral
-            </button>
           </div>
 
           {/* Seletores Dinâmicos de Mês e Ano */}
@@ -568,6 +580,17 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
                 </option>
               ))}
             </select>
+          )}
+
+          {isDirector && (
+            <button
+              type="button"
+              onClick={handleDownloadStatement}
+              disabled={exportingStatement}
+              className="inline-flex items-center gap-1.5 bg-[#00b49f] hover:bg-[#00cba9] disabled:opacity-50 text-slate-950 font-black px-3 py-1.5 rounded-xl text-xs transition-all"
+            >
+              <FileDown className="w-3.5 h-3.5" /> {exportingStatement ? 'Gerando PDF...' : 'Baixar Extrato PDF'}
+            </button>
           )}
         </div>
       </div>
@@ -876,14 +899,6 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
                 Nenhum lançamento financeiro encontrado para o período <strong className="text-white">{currentPeriodLabel}</strong>.
               </p>
               <div className="flex items-center justify-center gap-2 flex-wrap pt-1">
-                {periodType !== 'all' && (
-                  <button
-                    onClick={() => setPeriodType('all')}
-                    className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-white transition-all border border-slate-700"
-                  >
-                    🔍 Ver Histórico Geral (Todos os Meses)
-                  </button>
-                )}
                 {isDirector && (
                   <>
                     <button

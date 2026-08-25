@@ -19,6 +19,7 @@ import {
   AppNotification 
 } from '@/types';
 import { formatCurrency } from '@/lib/utils/masks';
+import { downloadFinancialStatementPdf } from '@/lib/utils/financial-statement-pdf';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase/client';
 import { 
   matchTransactionPeriod, 
@@ -56,7 +57,8 @@ import {
   Trash2, 
   AlertCircle,
   Bell,
-  UserPlus
+  UserPlus,
+  FileDown
 } from 'lucide-react';
 
 export default function DashboardPage() {
@@ -68,6 +70,7 @@ export default function DashboardPage() {
   const [nextMatch, setNextMatch] = useState<Match | null>(null);
   const [attendances, setAttendances] = useState<MatchAttendance[]>([]);
   const [transactions, setTransactions] = useState<FinancialTransaction[]>([]);
+  const [exportingStatement, setExportingStatement] = useState(false);
 
   // Modal de Exclusão de Grupo
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
@@ -245,6 +248,25 @@ export default function DashboardPage() {
     const mName = MONTH_NAMES[(financeSelectedMonth || 1) - 1] || 'Mês';
     return `${mName} de ${financeSelectedYear}`;
   }, [financePeriodType, financeSelectedMonth, financeSelectedYear]);
+
+  const handleDownloadStatement = async () => {
+    if (!activeGroup || financePeriodType === 'all' || exportingStatement) return;
+    setExportingStatement(true);
+    try {
+      await downloadFinancialStatementPdf({
+        groupName: activeGroup.name,
+        periodLabel: currentPeriodLabel,
+        periodType: financePeriodType,
+        year: financeSelectedYear,
+        month: financeSelectedMonth,
+        transactions: periodFilteredTransactions,
+      });
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : 'Nao foi possivel gerar o extrato em PDF.');
+    } finally {
+      setExportingStatement(false);
+    }
+  };
 
   // -------------------------------------------------------------
   // ESTADO 1: NOVO USUÁRIO COM 0 GRUPOS (ONBOARDING)
@@ -667,7 +689,7 @@ export default function DashboardPage() {
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
-            {/* Seletor de Período (Mensal / Anual / Geral) */}
+            {/* Seletor de Período (Mensal / Anual) */}
             <div className="bg-slate-950 p-1 rounded-xl border border-slate-800 flex items-center gap-1">
               <button
                 type="button"
@@ -690,17 +712,6 @@ export default function DashboardPage() {
                 }`}
               >
                 Anual
-              </button>
-              <button
-                type="button"
-                onClick={() => setFinancePeriodType('all')}
-                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
-                  financePeriodType === 'all'
-                    ? 'bg-[#00b49f] text-slate-950 shadow font-black'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                Geral
               </button>
             </div>
 
@@ -734,12 +745,22 @@ export default function DashboardPage() {
             )}
 
             {isDirector && (
-              <Link
-                href={`/grupos/${activeGroup?.id}/financas`}
-                className="inline-flex items-center gap-1.5 bg-slate-950 hover:bg-slate-800 border border-slate-800 text-xs font-bold text-slate-200 px-3 py-1 rounded-xl transition-colors"
-              >
-                <DollarSign className="w-3.5 h-3.5 text-emerald-400" /> Detalhes & Extrato
-              </Link>
+              <>
+                <button
+                  type="button"
+                  onClick={handleDownloadStatement}
+                  disabled={exportingStatement}
+                  className="inline-flex items-center gap-1.5 bg-[#00b49f] hover:bg-[#00cba9] disabled:opacity-50 text-xs font-black text-slate-950 px-3 py-1 rounded-xl transition-colors"
+                >
+                  <FileDown className="w-3.5 h-3.5" /> {exportingStatement ? 'Gerando...' : 'Extrato PDF'}
+                </button>
+                <Link
+                  href={`/grupos/${activeGroup?.id}/financas`}
+                  className="inline-flex items-center gap-1.5 bg-slate-950 hover:bg-slate-800 border border-slate-800 text-xs font-bold text-slate-200 px-3 py-1 rounded-xl transition-colors"
+                >
+                  <DollarSign className="w-3.5 h-3.5 text-emerald-400" /> Detalhes
+                </Link>
+              </>
             )}
           </div>
         </div>
