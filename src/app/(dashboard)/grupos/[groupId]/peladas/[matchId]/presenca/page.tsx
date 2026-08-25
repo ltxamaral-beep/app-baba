@@ -215,10 +215,26 @@ export default function AttendancePage({ params }: { params: { groupId: string; 
     }
   };
 
-  const handleCheckInOrder = (userId: string) => {
-    const currentCheckedIn = attendances.filter((a) => a.status === 'present').length;
-    MatchService.checkInArrival(match.id, userId, currentCheckedIn + 1, params.groupId);
-    setAttendances(MatchService.getAttendances(match.id));
+  const handleCheckInOrder = async (userId: string) => {
+    try {
+      await MatchService.checkInArrival(match.id, userId, undefined, params.groupId);
+      const cloudAttendances = await MatchService.syncAttendancesFromCloud(match.id);
+      setAttendances(cloudAttendances);
+    } catch (error) {
+      setNotification(error instanceof Error ? error.message : 'Erro ao registrar a chegada.');
+      setTimeout(() => setNotification(null), 4000);
+    }
+  };
+
+  const handleUndoCheckIn = async (userId: string) => {
+    try {
+      await MatchService.undoCheckInArrival(match.id, userId);
+      const cloudAttendances = await MatchService.syncAttendancesFromCloud(match.id);
+      setAttendances(cloudAttendances);
+    } catch (error) {
+      setNotification(error instanceof Error ? error.message : 'Erro ao desfazer a chegada.');
+      setTimeout(() => setNotification(null), 4000);
+    }
   };
 
   const handlePromoteToConfirmed = async (attendanceId: string, athleteName: string) => {
@@ -564,7 +580,7 @@ export default function AttendancePage({ params }: { params: { groupId: string; 
                 </div>
 
                 <div className="flex items-center gap-1.5">
-                  {isDirector && (
+                  {isDirector && att.status !== 'present' && (
                     <button
                       type="button"
                       onClick={() => handleDemoteToWaitlist(att.id, att.user.name)}
@@ -584,7 +600,7 @@ export default function AttendancePage({ params }: { params: { groupId: string; 
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   )}
-                  {att.status !== 'present' && (
+                  {isDirector && (att.status !== 'present' ? (
                     <button
                       type="button"
                       onClick={() => handleCheckInOrder(att.userId)}
@@ -593,7 +609,16 @@ export default function AttendancePage({ params }: { params: { groupId: string; 
                     >
                       Chegou no Campo
                     </button>
-                  )}
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => handleUndoCheckIn(att.userId)}
+                      title="Desfazer chegada e recalcular a ordem"
+                      className="bg-amber-950/40 hover:bg-amber-900/50 text-amber-300 border border-amber-700/50 px-2 py-1 rounded-lg text-[10px] font-semibold transition-colors"
+                    >
+                      Desfazer Chegada
+                    </button>
+                  ))}
                 </div>
               </div>
             ))}

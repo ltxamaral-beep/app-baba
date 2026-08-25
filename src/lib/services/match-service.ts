@@ -1003,52 +1003,54 @@ export const MatchService = {
     return { promotedUser };
   },
 
-  checkInArrival(matchId: string, userId: string, order: number, groupId?: string): void {
-    const attendances = this.getAttendances(matchId);
-    const target = attendances.find((a) => a.userId === userId);
-    if (target) {
-      target.status = 'present';
-      target.arrivalOrder = order;
-      target.checkedInAt = new Date().toISOString();
-      setStored(`attendances_${matchId}`, attendances);
+  async checkInArrival(matchId: string, userId: string, _order?: number, groupId?: string): Promise<MatchAttendance> {
+    const target = this.getAttendances(matchId).find((attendance) => attendance.userId === userId);
+    if (!target) throw new Error('Atleta nao encontrado na lista de confirmados.');
+    const response = await fetch(`/api/matches/${matchId}/attendances`, {
+      method: 'PATCH',
+      headers: await getApiHeaders(true),
+      body: JSON.stringify({ attendance_id: target.id, action: 'check_in' }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || 'Nao foi possivel registrar a chegada.');
+    const synced = await this.syncAttendancesFromCloud(matchId);
+    const checkedIn = synced.find((attendance) => attendance.id === target.id);
+    if (!checkedIn) throw new Error('A chegada nao foi confirmada pelo servidor.');
 
-      if (isSupabaseConfigured && supabase) {
-        (async () => {
-          try {
-            await supabase.from('match_attendances').update({
-              status: 'present',
-              arrival_order: order,
-              checked_in_at: target.checkedInAt
-            }).eq('id', target.id);
-          } catch (err) {
-            console.warn('Erro ao registrar check-in no Supabase:', err);
-          }
-        })();
-      }
-
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('attendance_updated', { detail: { matchId } }));
-        window.dispatchEvent(new Event('storage'));
-      }
-
-      try {
-        const gid = groupId || GroupService.getActiveGroupId() || '';
-        void NotificationService.notifyGroup(gid, {
-          type: 'player_arrived',
-          title: 'Chegada ao Campo ⚽',
-          message: `${target.user.name} chegou ao campo (Ordem de chegada #${order})!`,
-          data: {
-            userId,
-            userName: target.user.name,
-            matchId,
-            arrivalOrder: order,
-          }
-        });
-      } catch (e) {
-        console.warn('Erro ao disparar notificação de chegada:', e);
-      }
+    const gid = groupId || GroupService.getActiveGroupId() || '';
+    try {
+      await NotificationService.notifyGroup(gid, {
+        type: 'player_arrived',
+        title: 'Chegada ao Campo ⚽',
+        message: `${checkedIn.user.name} chegou ao campo (Ordem de chegada #${checkedIn.arrivalOrder})!`,
+        data: {
+          userId,
+          userName: checkedIn.user.name,
+          matchId,
+          arrivalOrder: checkedIn.arrivalOrder,
+        },
+      });
+    } catch (error) {
+      console.warn('Chegada salva, mas a notificacao nao foi enviada:', error);
     }
-  }
+    return checkedIn;
+  },
+
+  async undoCheckInArrival(matchId: string, userId: string): Promise<MatchAttendance> {
+    const target = this.getAttendances(matchId).find((attendance) => attendance.userId === userId);
+    if (!target) throw new Error('Atleta nao encontrado na lista.');
+    const response = await fetch(`/api/matches/${matchId}/attendances`, {
+      method: 'PATCH',
+      headers: await getApiHeaders(true),
+      body: JSON.stringify({ attendance_id: target.id, action: 'undo_check_in' }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || 'Nao foi possivel desfazer a chegada.');
+    const synced = await this.syncAttendancesFromCloud(matchId);
+    const restored = synced.find((attendance) => attendance.id === target.id);
+    if (!restored) throw new Error('A alteracao nao foi confirmada pelo servidor.');
+    return restored;
+  },
 };
 
 // ---------------------------------------------------------------------------

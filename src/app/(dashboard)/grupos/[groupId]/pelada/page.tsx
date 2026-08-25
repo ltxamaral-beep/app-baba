@@ -209,6 +209,7 @@ export default function PeladaHubPage({
 
   // Convidados
   const [guestModalOpen, setGuestModalOpen] = useState(false);
+  const [arrivalLoadingId, setArrivalLoadingId] = useState<string | null>(null);
   const [guestForm, setGuestForm] = useState({
     name: '',
     position: 'meia' as UserPosition,
@@ -221,7 +222,16 @@ export default function PeladaHubPage({
 
   const isDirector = currentMember?.role === 'presidente' || currentMember?.role === 'adm' || currentMember?.role === 'tesoureiro';
   const isAttendanceOpen = !!((activeMatch && activeMatch.status === 'scheduled') || group.isOpenAttendance);
-  const confirmedList = attendances.filter((a) => a.status === 'confirmed' || a.status === 'present');
+  const confirmedList = attendances
+    .filter((a) => a.status === 'confirmed' || a.status === 'present')
+    .sort((a, b) => {
+      if (a.status === 'present' && b.status !== 'present') return -1;
+      if (a.status !== 'present' && b.status === 'present') return 1;
+      if (a.status === 'present' && b.status === 'present') {
+        return Number(a.arrivalOrder || 0) - Number(b.arrivalOrder || 0);
+      }
+      return new Date(a.confirmedAt).getTime() - new Date(b.confirmedAt).getTime();
+    });
   const waitlistList = attendances.filter((a) => a.status === 'waitlist');
   const guestList = attendances.filter((a) => a.isGuest && a.status !== 'cancelled');
   const maxSlots = activeMatch?.maxPlayers || group.maxSlots || 24;
@@ -298,6 +308,27 @@ export default function PeladaHubPage({
     }
     showToast(`${athleteName} foi movido para a fila de espera.`, 'info');
     await loadData();
+  };
+
+  const handleArrival = async (attendance: MatchAttendance, undo = false) => {
+    if (!activeMatch || arrivalLoadingId) return;
+    setArrivalLoadingId(attendance.id);
+    try {
+      const updated = undo
+        ? await MatchService.undoCheckInArrival(activeMatch.id, attendance.userId)
+        : await MatchService.checkInArrival(activeMatch.id, attendance.userId, undefined, groupId);
+      showToast(
+        undo
+          ? `Chegada de ${attendance.user.name} desfeita e ordem recalculada.`
+          : `${attendance.user.name} registrado na chegada #${updated.arrivalOrder}.`,
+        undo ? 'info' : 'success',
+      );
+      await loadData();
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Erro ao registrar a chegada.', 'error');
+    } finally {
+      setArrivalLoadingId(null);
+    }
   };
 
   const handleOpenEditMatch = () => {
@@ -790,11 +821,19 @@ export default function PeladaHubPage({
                   {confirmedList.map((att, idx) => (
                     <div
                       key={att.id}
-                      className="p-3 rounded-2xl bg-slate-950/70 border border-slate-800 flex items-center justify-between text-xs"
+                      className={`p-3 rounded-2xl border flex items-center justify-between text-xs ${
+                        att.status === 'present'
+                          ? 'bg-amber-950/25 border-amber-500/35'
+                          : 'bg-slate-950/70 border-slate-800'
+                      }`}
                     >
                       <div className="flex items-center gap-3">
-                        <span className="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-400 font-bold flex items-center justify-center text-xs">
-                          {idx + 1}
+                        <span className={`w-7 h-7 rounded-full font-black flex items-center justify-center text-xs ${
+                          att.status === 'present'
+                            ? 'bg-amber-500/20 text-amber-300'
+                            : 'bg-emerald-500/20 text-emerald-400'
+                        }`}>
+                          {att.status === 'present' ? `#${att.arrivalOrder}` : idx + 1}
                         </span>
                         <div>
                           <p className="font-bold text-white flex items-center gap-1.5 flex-wrap">
@@ -819,14 +858,37 @@ export default function PeladaHubPage({
                       <div className="flex items-center gap-2">
                         {isDirector && (
                           <>
-                            <button
-                              type="button"
-                              onClick={() => handleDemoteToWaitlist(att.id, att.user.name)}
-                              className="p-1 text-slate-500 hover:text-amber-400 transition-colors"
-                              title="Mover para a fila de espera"
-                            >
-                              <Clock className="w-3.5 h-3.5" />
-                            </button>
+                            {att.status === 'present' ? (
+                              <button
+                                type="button"
+                                disabled={arrivalLoadingId === att.id}
+                                onClick={() => handleArrival(att, true)}
+                                className="inline-flex items-center gap-1 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px] font-bold text-amber-300 hover:bg-amber-500/20 disabled:opacity-50"
+                                title="Desfazer chegada e recalcular a ordem"
+                              >
+                                <Footprints className="w-3.5 h-3.5" /> Desfazer
+                              </button>
+                            ) : (
+                              <>
+                                <button
+                                  type="button"
+                                  disabled={arrivalLoadingId === att.id}
+                                  onClick={() => handleArrival(att)}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-2 py-1 text-[10px] font-black text-emerald-300 hover:bg-emerald-500/25 disabled:opacity-50"
+                                  title="Confirmar que o atleta chegou ao campo"
+                                >
+                                  <Footprints className="w-3.5 h-3.5" /> {arrivalLoadingId === att.id ? 'Salvando...' : 'Chegou'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDemoteToWaitlist(att.id, att.user.name)}
+                                  className="p-1 text-slate-500 hover:text-amber-400 transition-colors"
+                                  title="Mover para a fila de espera"
+                                >
+                                  <Clock className="w-3.5 h-3.5" />
+                                </button>
+                              </>
+                            )}
                             <button
                               type="button"
                               onClick={() => handleRemoveAthlete(att.id, att.user.name)}
@@ -847,8 +909,14 @@ export default function PeladaHubPage({
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         )}
-                        <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 px-2 py-1 rounded-lg">
-                          Confirmado
+                        <span className={`text-[10px] font-bold px-2 py-1 rounded-lg ${
+                          att.status === 'present'
+                            ? 'text-amber-300 bg-amber-500/10'
+                            : 'text-emerald-400 bg-emerald-500/10'
+                        }`}>
+                          {att.status === 'present'
+                            ? `Chegou ${att.checkedInAt ? new Date(att.checkedInAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : ''}`
+                            : 'Confirmado'}
                         </span>
                       </div>
                     </div>

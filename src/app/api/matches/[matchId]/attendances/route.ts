@@ -7,11 +7,14 @@ const DIRECTOR_ROLES = ['presidente', 'adm', 'tesoureiro'];
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const GUEST_EMAIL_SUFFIX = '@convidado.gestao-pelada.local';
 
-function db() {
+function db(token?: string) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
   if (!url || !key) throw new Error('Supabase nao configurado');
-  return createClient(url, key, { auth: { persistSession: false } });
+  return createClient(url, key, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    ...(token ? { global: { headers: { Authorization: `Bearer ${token}` } } } : {}),
+  });
 }
 
 function response(data: unknown, status = 200) {
@@ -29,7 +32,7 @@ function guestHostId(address?: string | null) {
 async function authorize(request: NextRequest, matchId: string) {
   const token = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
   if (!token) return { error: response({ error: 'Nao autorizado' }, 401) };
-  const client = db();
+  const client = db(token);
   const { data: authData, error: authError } = await client.auth.getUser(token);
   if (authError || !authData.user) return { error: response({ error: 'Sessao invalida' }, 401) };
 
@@ -184,6 +187,23 @@ export async function PATCH(request: NextRequest, { params }: { params: { matchI
   if (!auth.isDirector) return response({ error: 'Apenas a diretoria pode alterar a fila' }, 403);
 
   const body = await request.json();
+  if (body.action === 'check_in' || body.action === 'undo_check_in') {
+    if (!UUID_PATTERN.test(body.attendance_id || '')) {
+      return response({ error: 'Presenca invalida' }, 400);
+    }
+    const { error: arrivalError } = await auth.client!.rpc('manage_match_arrival', {
+      p_match_id: params.matchId,
+      p_attendance_id: body.attendance_id,
+      p_action: body.action,
+    });
+    if (arrivalError) return response({ error: arrivalError.message }, 400);
+    const { data: attendance, error: attendanceError } = await auth.client!
+      .from('match_attendances').select(selection)
+      .eq('id', body.attendance_id).eq('match_id', params.matchId).single();
+    if (attendanceError) return response({ error: attendanceError.message }, 500);
+    return response({ data: attendance });
+  }
+
   if (!UUID_PATTERN.test(body.attendance_id || '') || !['confirmed', 'waitlist'].includes(body.status)) {
     return response({ error: 'Alteracao invalida' }, 400);
   }
