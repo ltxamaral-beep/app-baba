@@ -440,6 +440,10 @@ export default function HomePage() {
                     Link enviado. Abra o e-mail neste navegador e clique no link para entrar com sincronizacao ativa.
                   </p>
                 )}
+
+                <p className="text-[11px] text-slate-500 text-center">
+                  Solicite apenas uma vez. Se o link já foi enviado, verifique também a caixa de spam.
+                </p>
               </form>
             </div>
           )}

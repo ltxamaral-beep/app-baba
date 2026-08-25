@@ -138,6 +138,19 @@ export const AuthService = {
       return { success: false, error: 'A autenticacao por e-mail nao esta configurada.' };
     }
 
+    const throttleKey = 'gestao_pelada_last_magic_link_request';
+    if (typeof window !== 'undefined') {
+      const lastRequest = Number(window.localStorage.getItem(throttleKey) || 0);
+      const secondsSinceLastRequest = Math.floor((Date.now() - lastRequest) / 1000);
+      if (lastRequest && secondsSinceLastRequest < 60) {
+        return {
+          success: false,
+          error: `Aguarde ${60 - secondsSinceLastRequest} segundos antes de solicitar outro link. Verifique também a caixa de spam.`,
+        };
+      }
+      window.localStorage.setItem(throttleKey, String(Date.now()));
+    }
+
     try {
       const emailRedirectTo = typeof window !== 'undefined'
         ? `${window.location.origin}/auth/activate`
@@ -155,6 +168,17 @@ export const AuthService = {
       );
 
       if (error) {
+        const errorCode = (error as any).code || '';
+        const errorMessage = error.message?.toLowerCase() || '';
+        if (errorCode === 'over_email_send_rate_limit' || errorMessage.includes('email rate limit')) {
+          return {
+            success: false,
+            error: 'O limite de e-mails do Supabase foi atingido. Use o primeiro link recebido ou aguarde até 1 hora antes de solicitar outro.',
+          };
+        }
+        if (errorCode === 'over_request_rate_limit' || errorMessage.includes('rate limit')) {
+          return { success: false, error: 'Muitas tentativas seguidas. Aguarde alguns minutos e tente novamente.' };
+        }
         return { success: false, error: error.message || 'Nao foi possivel enviar o link de acesso.' };
       }
 
