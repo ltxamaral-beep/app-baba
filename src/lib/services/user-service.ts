@@ -7,6 +7,66 @@ import { generateUUID, isValidUUID, getStored, setStored, withTimeout } from './
 // 0. GESTÃO DE USUÁRIO LOGADO & PERFIL
 // ---------------------------------------------------------------------------
 export const UserService = {
+  async getAuthenticatedUser(): Promise<UserProfile | null> {
+    if (!isSupabaseConfigured || !supabase) return null;
+    try {
+      const { data: { session } } = await withTimeout(
+        supabase.auth.getSession(),
+        5000,
+        { data: { session: null } } as any
+      );
+      const authUser = session?.user;
+      if (!authUser) return null;
+
+      const email = authUser.email?.trim().toLowerCase() || '';
+      let query = supabase.from('users').select('*').eq('id', authUser.id);
+      let { data: dbUser } = await withTimeout(query.maybeSingle(), 4000, { data: null } as any);
+      if (!dbUser && email) {
+        const result = await withTimeout(
+          supabase.from('users').select('*').eq('email', email).maybeSingle(),
+          4000,
+          { data: null } as any
+        );
+        dbUser = result.data;
+      }
+
+      const profile: UserProfile = dbUser ? {
+        id: dbUser.id,
+        name: dbUser.name || authUser.user_metadata?.full_name || email.split('@')[0] || 'Atleta',
+        nickname: dbUser.nickname || undefined,
+        email: dbUser.email || email,
+        phone: dbUser.phone || '',
+        cpf: dbUser.cpf || '',
+        address: dbUser.address || '',
+        avatarUrl: dbUser.avatar_url || authUser.user_metadata?.avatar_url,
+        mainPosition: dbUser.main_position || 'meia',
+        secondaryPosition: dbUser.secondary_position || undefined,
+        dominantFoot: dbUser.dominant_foot || 'destro',
+        heightCm: dbUser.height_cm || undefined,
+        weightKg: dbUser.weight_kg || undefined,
+        overallRating: dbUser.overall_rating || 6.5,
+        createdAt: dbUser.created_at || new Date().toISOString(),
+      } : {
+        id: authUser.id,
+        name: authUser.user_metadata?.full_name || authUser.user_metadata?.name || email.split('@')[0] || 'Atleta',
+        email,
+        phone: authUser.user_metadata?.phone || '',
+        cpf: '',
+        address: '',
+        avatarUrl: authUser.user_metadata?.avatar_url,
+        mainPosition: 'meia',
+        dominantFoot: 'destro',
+        overallRating: 6.5,
+        createdAt: new Date().toISOString(),
+      };
+      this.setCurrentUser(profile);
+      return profile;
+    } catch (err) {
+      console.warn('Erro ao validar usuario autenticado:', err);
+      return null;
+    }
+  },
+
   getCurrentUser(): UserProfile {
     const defaultUser: UserProfile = {
       id: 'c5a2cc7c-0658-44f4-be73-bb427baca751',
@@ -129,23 +189,8 @@ export const UserService = {
         }
       }
 
-      // 4. Tenta buscar por nome exato (se for atleta cadastrado)
-      if (user.name && user.name.trim().length > 3 && user.name !== 'Atleta' && user.name !== 'Atleta Sem Nome') {
-        const { data: byName } = await withTimeout(
-          supabase.from('users').select('id, name, email, cpf').ilike('name', user.name.trim()).maybeSingle(),
-          3000,
-          { data: null }
-        );
-        if (byName && byName.id) {
-          if (user.id !== byName.id) {
-            user.id = byName.id;
-            this.setCurrentUser(user);
-          }
-          return byName.id;
-        }
-      }
-
-      // 5. Se não existe no banco, insere o usuário no PostgreSQL
+      // 4. Se não existe no banco, insere o usuário no PostgreSQL.
+      // Nunca vincula identidades apenas pelo nome: pessoas diferentes podem ter nomes iguais.
       const newUserId = isValidUUID(user.id) ? user.id : generateUUID();
       user.id = newUserId;
       const safeEmail = userEmail && userEmail.includes('@') ? userEmail : `atleta_${newUserId.slice(0, 8)}@gestaopelada.com`;

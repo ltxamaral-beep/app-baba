@@ -300,7 +300,15 @@ export default function RegisterPage() {
 
             <div className="pt-4 flex flex-col gap-2.5">
               <button
-                onClick={() => router.push('/dashboard')}
+                onClick={() => {
+                  const requestedPath = typeof window !== 'undefined'
+                    ? new URLSearchParams(window.location.search).get('next')
+                    : null;
+                  const safePath = requestedPath?.startsWith('/') && !requestedPath.startsWith('//')
+                    ? requestedPath
+                    : '/dashboard';
+                  router.push(safePath);
+                }}
                 className="w-full bg-[#00b49f] hover:bg-[#00cba9] text-slate-950 font-black py-3 px-4 rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-[#00b49f]/20 transition-all"
               >
                 <Trophy className="w-4 h-4" /> Entrar no Painel do Baba

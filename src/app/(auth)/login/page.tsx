@@ -51,7 +51,11 @@ export default function LoginPage() {
 
       // Redireciona com reload completo para recarregar o contexto com o usuário logado
       if (typeof window !== 'undefined') {
-        window.location.href = '/dashboard';
+        const requestedPath = new URLSearchParams(window.location.search).get('next');
+        const safePath = requestedPath?.startsWith('/') && !requestedPath.startsWith('//')
+          ? requestedPath
+          : '/dashboard';
+        window.location.href = safePath;
       } else {
         router.push('/dashboard');
       }

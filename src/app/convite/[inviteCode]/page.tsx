@@ -4,7 +4,8 @@ import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { GroupService, UserService } from '@/lib/services/storage-service';
-import { Group, MembershipType } from '@/types';
+import { AuthService } from '@/lib/services/auth-service';
+import { Group, MembershipType, UserProfile } from '@/types';
 import { 
   Users, 
   MapPin, 
@@ -26,6 +27,8 @@ export default function InviteJoinPage({ params }: { params: { inviteCode: strin
   const [joinedSuccess, setJoinedSuccess] = useState(false);
   const [loading, setLoading] = useState(false);
   const [searching, setSearching] = useState(true);
+  const [authChecking, setAuthChecking] = useState(true);
+  const [authenticatedUser, setAuthenticatedUser] = useState<UserProfile | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -52,12 +55,25 @@ export default function InviteJoinPage({ params }: { params: { inviteCode: strin
     }
   }, [params.inviteCode]);
 
+  useEffect(() => {
+    UserService.getAuthenticatedUser()
+      .then(setAuthenticatedUser)
+      .finally(() => setAuthChecking(false));
+  }, []);
+
   const handleJoin = async () => {
     if (!group) return;
     setLoading(true);
     setError(null);
 
     try {
+      const sessionUser = await UserService.getAuthenticatedUser();
+      if (!sessionUser) {
+        setAuthenticatedUser(null);
+        setError('Faca login com a sua propria conta antes de aceitar o convite.');
+        return;
+      }
+      setAuthenticatedUser(sessionUser);
       const result = await GroupService.joinGroupByCode(params.inviteCode, membershipType);
       if (result.success) {
         setJoinedSuccess(true);
@@ -217,17 +233,58 @@ export default function InviteJoinPage({ params }: { params: { inviteCode: strin
             )}
 
             {/* Ação */}
-            <button
-              onClick={handleJoin}
-              disabled={loading}
-              className="w-full bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-slate-950 font-black py-3.5 px-4 rounded-xl text-xs flex items-center justify-center gap-2 shadow-xl shadow-emerald-500/20 transition-all disabled:opacity-50"
-            >
-              {loading ? 'Confirmando Entrada...' : (
-                <>
-                  <CheckCircle2 className="w-4 h-4" /> Aceitar Convite & Entrar no Grupo
-                </>
-              )}
-            </button>
+            {authChecking ? (
+              <div className="w-full bg-slate-800 text-slate-300 font-bold py-3.5 px-4 rounded-xl text-xs text-center">
+                Verificando sua conta...
+              </div>
+            ) : authenticatedUser ? (
+              <div className="space-y-2">
+                <div className="bg-slate-950/60 border border-emerald-500/30 rounded-xl p-3 text-xs">
+                  <span className="text-slate-500 block text-[10px] uppercase font-bold">Solicitacao em nome de</span>
+                  <strong className="text-emerald-300">{authenticatedUser.name}</strong>
+                  <span className="text-slate-400 block text-[11px]">{authenticatedUser.email}</span>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await AuthService.signOut();
+                      setAuthenticatedUser(null);
+                    }}
+                    className="mt-2 text-[11px] font-bold text-amber-300 hover:text-amber-200 underline"
+                  >
+                    Nao sou esta pessoa
+                  </button>
+                </div>
+                <button
+                  onClick={handleJoin}
+                  disabled={loading}
+                  className="w-full bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-slate-950 font-black py-3.5 px-4 rounded-xl text-xs flex items-center justify-center gap-2 shadow-xl shadow-emerald-500/20 transition-all disabled:opacity-50"
+                >
+                  {loading ? 'Confirmando Entrada...' : (
+                    <><CheckCircle2 className="w-4 h-4" /> Aceitar Convite & Entrar no Grupo</>
+                  )}
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <div className="bg-amber-950/30 border border-amber-500/40 rounded-xl p-3 text-xs text-amber-200">
+                  Entre ou crie sua propria conta para que a solicitacao seja enviada com seu nome correto.
+                </div>
+                <button
+                  type="button"
+                  onClick={() => router.push(`/login?next=${encodeURIComponent(`/convite/${params.inviteCode}`)}`)}
+                  className="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black py-3 rounded-xl text-xs"
+                >
+                  Entrar com minha conta
+                </button>
+                <button
+                  type="button"
+                  onClick={() => router.push(`/register?next=${encodeURIComponent(`/convite/${params.inviteCode}`)}`)}
+                  className="w-full bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white font-bold py-3 rounded-xl text-xs"
+                >
+                  Criar minha conta
+                </button>
+              </div>
+            )}
           </>
         )}
       </div>

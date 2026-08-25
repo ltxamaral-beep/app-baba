@@ -1167,7 +1167,10 @@ export const GroupService = {
       return { success: false, error: 'Grupo não encontrado. Verifique se digitou o nome ou código corretamente.' };
     }
 
-    const user = UserService.getCurrentUser();
+    const user = await UserService.getAuthenticatedUser();
+    if (!user) {
+      return { success: false, error: 'Faca login com a sua propria conta antes de solicitar entrada no grupo.' };
+    }
     const validUserId = await UserService.ensureUserInCloud(user);
 
     // Garante que os membros da nuvem estejam sincronizados
