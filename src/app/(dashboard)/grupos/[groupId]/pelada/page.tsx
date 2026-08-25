@@ -53,8 +53,6 @@ import {
   UserPlus,
   Trash2,
   Ticket,
-  Share2,
-  Copy,
   MessageCircle,
   Edit3
 } from 'lucide-react';
@@ -118,7 +116,6 @@ export default function PeladaHubPage({
   // Votação Pós-Jogo
   const [ratingVotes, setRatingVotes] = useState<Record<string, { rating: number; tag?: string }>>({});
   const [votesSubmitted, setVotesSubmitted] = useState(false);
-  const [copiedList, setCopiedList] = useState(false);
   const loadInFlight = useRef(false);
 
   const loadData = async () => {
@@ -573,15 +570,6 @@ export default function PeladaHubPage({
     window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`, '_blank');
   };
 
-  const handleCopyList = () => {
-    const text = getWhatsAppListText();
-    if (!text) return;
-    navigator.clipboard.writeText(text);
-    setCopiedList(true);
-    showToast('Parcial da lista copiada para a área de transferência! 📋', 'success');
-    setTimeout(() => setCopiedList(false), 3000);
-  };
-
   const rankings = MatchStatsService.getGroupRankings(group.id);
 
   return (
@@ -701,35 +689,16 @@ export default function PeladaHubPage({
             </>
           )}
 
-          {/* Botões de WhatsApp: Compartilhar Parcial & Copiar Lista */}
-          {activeMatch && (
-            <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={handleShareWhatsAppList}
-                className="inline-flex items-center gap-1.5 bg-[#25D366]/15 hover:bg-[#25D366]/25 border border-[#25D366]/40 text-[#25D366] font-bold px-3.5 py-2.5 rounded-xl text-xs transition-all active:scale-95 shadow-sm"
-                title="Compartilhar lista parcial formatada no WhatsApp"
-              >
-                <MessageCircle className="w-4 h-4 fill-[#25D366]" /> WhatsApp Parcial
-              </button>
-
-              <button
-                type="button"
-                onClick={handleCopyList}
-                className="inline-flex items-center gap-1.5 bg-[#121e2b] hover:bg-[#182737] border border-[#1e3247] text-slate-200 font-bold px-3 py-2.5 rounded-xl text-xs transition-colors"
-                title="Copiar texto da parcial da lista para a área de transferência"
-              >
-                {copiedList ? (
-                  <span className="text-emerald-400 flex items-center gap-1 font-bold">
-                    <Check className="w-3.5 h-3.5" /> Copiado!
-                  </span>
-                ) : (
-                  <>
-                    <Copy className="w-3.5 h-3.5 text-slate-400" /> Copiar
-                  </>
-                )}
-              </button>
-            </div>
+          {/* Compartilhamento disponivel para todos os membros ativos */}
+          {activeMatch && currentMember?.status === 'active' && (
+            <button
+              type="button"
+              onClick={handleShareWhatsAppList}
+              className="inline-flex items-center gap-1.5 bg-[#25D366]/15 hover:bg-[#25D366]/25 border border-[#25D366]/40 text-[#25D366] font-bold px-3.5 py-2.5 rounded-xl text-xs transition-all active:scale-95 shadow-sm"
+              title="Compartilhar lista parcial formatada no WhatsApp"
+            >
+              <MessageCircle className="w-4 h-4 fill-[#25D366]" /> WhatsApp Parcial
+            </button>
           )}
         </div>
       </div>
@@ -787,51 +756,6 @@ export default function PeladaHubPage({
                   <Zap className="w-4 h-4 fill-slate-950" /> Abrir Lista Agora
                 </button>
               )}
-            </div>
-          )}
-
-          {/* Banner de Ação Rápida WhatsApp Parcial */}
-          {activeMatch && (
-            <div className="bg-gradient-to-r from-[#121e2b] via-slate-900 to-[#121e2b] border border-[#1e3247] rounded-3xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xl">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-[#25D366]/15 border border-[#25D366]/30 text-[#25D366] flex items-center justify-center font-bold flex-shrink-0">
-                  <MessageCircle className="w-5 h-5 fill-[#25D366]" />
-                </div>
-                <div>
-                  <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
-                    Parcial da Lista para WhatsApp
-                  </h4>
-                  <p className="text-[11px] text-slate-400">
-                    Envie a lista atualizada com confirmados ({confirmedList.length}/{maxSlots}), fila e link do baba no grupo do WhatsApp.
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2 w-full sm:w-auto">
-                <button
-                  type="button"
-                  onClick={handleShareWhatsAppList}
-                  className="flex-1 sm:flex-none bg-[#25D366] hover:bg-[#20bd5a] text-slate-950 font-black px-4 py-2 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-md shadow-[#25D366]/20 transition-all active:scale-95"
-                >
-                  <Share2 className="w-3.5 h-3.5" /> WhatsApp
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handleCopyList}
-                  className="flex-1 sm:flex-none bg-[#0d1721] hover:bg-slate-800 border border-[#182737] text-slate-200 font-bold px-3.5 py-2 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-colors"
-                >
-                  {copiedList ? (
-                    <span className="text-emerald-400 flex items-center gap-1 font-bold">
-                      <Check className="w-3.5 h-3.5" /> Copiado!
-                    </span>
-                  ) : (
-                    <>
-                      <Copy className="w-3.5 h-3.5 text-slate-400" /> Copiar Texto
-                    </>
-                  )}
-                </button>
-              </div>
             </div>
           )}
 
