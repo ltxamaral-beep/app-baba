@@ -20,10 +20,16 @@ async function authorizeDirector(request: NextRequest, matchId: string) {
   const client = db();
   const { data: authData, error: authError } = await client.auth.getUser(token);
   if (authError || !authData.user) return { error: response({ error: 'Sessao invalida' }, 401) };
+  let profileId = authData.user.id;
+  if (authData.user.email) {
+    const { data: profile } = await client.from('users').select('id')
+      .eq('email', authData.user.email.toLowerCase()).maybeSingle();
+    if (profile?.id) profileId = profile.id;
+  }
   const { data: match } = await client.from('matches').select('group_id').eq('id', matchId).maybeSingle();
   if (!match) return { error: response({ error: 'Lista nao encontrada' }, 404) };
   const { data: member } = await client.from('group_members').select('role,status')
-    .eq('group_id', match.group_id).eq('user_id', authData.user.id).eq('status', 'active').maybeSingle();
+    .eq('group_id', match.group_id).eq('user_id', profileId).eq('status', 'active').maybeSingle();
   if (!member || !['presidente', 'adm', 'tesoureiro'].includes(member.role)) {
     return { error: response({ error: 'Apenas a diretoria pode alterar listas' }, 403) };
   }

@@ -20,13 +20,19 @@ async function authorize(request: NextRequest, groupId: string, directorOnly = f
   const client = db();
   const { data: authData, error: authError } = await client.auth.getUser(token);
   if (authError || !authData.user) return { error: response({ error: 'Sessao invalida' }, 401) };
+  let profileId = authData.user.id;
+  if (authData.user.email) {
+    const { data: profile } = await client.from('users').select('id')
+      .eq('email', authData.user.email.toLowerCase()).maybeSingle();
+    if (profile?.id) profileId = profile.id;
+  }
   const { data: member } = await client.from('group_members').select('role,status')
-    .eq('group_id', groupId).eq('user_id', authData.user.id).eq('status', 'active').maybeSingle();
+    .eq('group_id', groupId).eq('user_id', profileId).eq('status', 'active').maybeSingle();
   if (!member) return { error: response({ error: 'Usuario nao pertence ao grupo' }, 403) };
   if (directorOnly && !['presidente', 'adm', 'tesoureiro'].includes(member.role)) {
     return { error: response({ error: 'Apenas a diretoria pode alterar listas' }, 403) };
   }
-  return { client, user: authData.user };
+  return { client, user: authData.user, profileId };
 }
 
 export async function GET(request: NextRequest, { params }: { params: { groupId: string } }) {

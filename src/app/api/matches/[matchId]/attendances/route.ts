@@ -20,12 +20,18 @@ async function authorize(request: NextRequest, matchId: string) {
   const client = db();
   const { data: authData, error: authError } = await client.auth.getUser(token);
   if (authError || !authData.user) return { error: response({ error: 'Sessao invalida' }, 401) };
+  let profileId = authData.user.id;
+  if (authData.user.email) {
+    const { data: profile } = await client.from('users').select('id')
+      .eq('email', authData.user.email.toLowerCase()).maybeSingle();
+    if (profile?.id) profileId = profile.id;
+  }
   const { data: match } = await client.from('matches').select('group_id').eq('id', matchId).maybeSingle();
   if (!match) return { error: response({ error: 'Lista nao encontrada' }, 404) };
   const { data: member } = await client.from('group_members').select('role,status')
-    .eq('group_id', match.group_id).eq('user_id', authData.user.id).eq('status', 'active').maybeSingle();
+    .eq('group_id', match.group_id).eq('user_id', profileId).eq('status', 'active').maybeSingle();
   if (!member) return { error: response({ error: 'Usuario nao pertence ao grupo' }, 403) };
-  return { client, user: authData.user, member };
+  return { client, user: authData.user, member, profileId };
 }
 
 const selection = `
@@ -50,10 +56,7 @@ export async function POST(request: NextRequest, { params }: { params: { matchId
   const body = await request.json();
   const client = auth.client!;
   const isDirector = ['presidente', 'adm', 'tesoureiro'].includes(auth.member!.role);
-  if (body.user_id !== auth.user!.id && !isDirector) {
-    return response({ error: 'Usuario so pode confirmar a propria presenca' }, 403);
-  }
-  let resolvedUserId = isDirector ? body.user_id : auth.user!.id;
+  let resolvedUserId = isDirector ? body.user_id : auth.profileId!;
 
   if (body.user) {
     const user = body.user;
