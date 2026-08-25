@@ -69,17 +69,14 @@ export const UserService = {
 
   getCurrentUser(): UserProfile {
     const defaultUser: UserProfile = {
-      id: 'c5a2cc7c-0658-44f4-be73-bb427baca751',
-      name: 'Leandro Teixeira do Amaral',
-      email: 'ltxamaral@gmail.com',
-      phone: '(71) 98718-6286',
-      cpf: '031.868.265-60',
-      address: 'Salvador, BA',
-      mainPosition: 'volante',
-      secondaryPosition: 'meia',
+      id: '00000000-0000-0000-0000-000000000000',
+      name: '',
+      email: '',
+      phone: '',
+      cpf: '',
+      address: '',
+      mainPosition: 'meia',
       dominantFoot: 'destro',
-      heightCm: 178,
-      weightKg: 76,
       overallRating: 6.5,
       createdAt: new Date().toISOString(),
     };

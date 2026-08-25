@@ -657,10 +657,10 @@ export const MatchService = {
           const apiBody = await apiResponse?.json().catch(() => null);
           throw new Error(apiBody?.error || 'Falha ao confirmar presenca');
         }
-      } catch (err) {
+      } catch (err: any) {
         console.warn('Erro ao salvar presença no Supabase:', err);
         await this.syncAttendancesFromCloud(matchId);
-        throw new Error('Nao foi possivel confirmar sua presenca na nuvem. Tente novamente.');
+        throw new Error(err.message || 'Nao foi possivel confirmar sua presenca na nuvem. Tente novamente.');
       }
     }
 
