@@ -127,67 +127,6 @@ export const AuthService = {
   /**
    * Login por CPF e Senha
    */
-  async requestMagicLink(email: string): Promise<{ success: boolean; error?: string }> {
-    const cleanEmail = email.trim().toLowerCase();
-
-    if (!cleanEmail || !cleanEmail.includes('@')) {
-      return { success: false, error: 'Informe um e-mail valido.' };
-    }
-
-    if (!isSupabaseConfigured || !supabase) {
-      return { success: false, error: 'A autenticacao por e-mail nao esta configurada.' };
-    }
-
-    const throttleKey = 'gestao_pelada_last_magic_link_request';
-    if (typeof window !== 'undefined') {
-      const lastRequest = Number(window.localStorage.getItem(throttleKey) || 0);
-      const secondsSinceLastRequest = Math.floor((Date.now() - lastRequest) / 1000);
-      if (lastRequest && secondsSinceLastRequest < 60) {
-        return {
-          success: false,
-          error: `Aguarde ${60 - secondsSinceLastRequest} segundos antes de solicitar outro link. Verifique também a caixa de spam.`,
-        };
-      }
-      window.localStorage.setItem(throttleKey, String(Date.now()));
-    }
-
-    try {
-      const emailRedirectTo = typeof window !== 'undefined'
-        ? `${window.location.origin}/auth/activate`
-        : undefined;
-      const { error } = await withTimeout(
-        supabase.auth.signInWithOtp({
-          email: cleanEmail,
-          options: {
-            shouldCreateUser: true,
-            emailRedirectTo,
-          },
-        }),
-        8000,
-        'Tempo limite ao enviar o link de acesso.'
-      );
-
-      if (error) {
-        const errorCode = (error as any).code || '';
-        const errorMessage = error.message?.toLowerCase() || '';
-        if (errorCode === 'over_email_send_rate_limit' || errorMessage.includes('email rate limit')) {
-          return {
-            success: false,
-            error: 'O limite de e-mails do Supabase foi atingido. Use o primeiro link recebido ou aguarde até 1 hora antes de solicitar outro.',
-          };
-        }
-        if (errorCode === 'over_request_rate_limit' || errorMessage.includes('rate limit')) {
-          return { success: false, error: 'Muitas tentativas seguidas. Aguarde alguns minutos e tente novamente.' };
-        }
-        return { success: false, error: error.message || 'Nao foi possivel enviar o link de acesso.' };
-      }
-
-      return { success: true };
-    } catch (err: any) {
-      return { success: false, error: err?.message || 'Nao foi possivel enviar o link de acesso.' };
-    }
-  },
-
   async signInWithCpf(cpf: string, password?: string): Promise<{ success: boolean; error?: string; user?: UserProfile }> {
     const cleanCpf = cpf.replace(/\D/g, '');
 
@@ -264,7 +203,7 @@ export const AuthService = {
           return { success: false, error: 'E-mail nao confirmado. Ative o acesso usando seu e-mail.' };
         }
 
-        return { success: false, error: 'CPF ou senha incorretos. Se necessario, ative o acesso por e-mail.' };
+        return { success: false, error: 'CPF ou senha incorretos. Solicite ao diretor a criação ou redefinição do acesso.' };
       }
 
       // Fallback local caso offline ou cadastrado na sessão / mock
@@ -399,12 +338,12 @@ export const AuthService = {
         }
 
         if (authError?.message === 'Invalid login credentials' || authError?.code === 'invalid_credentials') {
-          return { success: false, error: 'E-mail ou senha incorretos. Se necessario, ative o acesso por e-mail.' };
+          return { success: false, error: 'E-mail ou senha incorretos. Solicite ao diretor a criação ou redefinição do acesso.' };
         }
         if (authError?.message?.toLowerCase().includes('email not confirmed')) {
-          return { success: false, error: 'E-mail nao confirmado. Ative o acesso usando seu e-mail.' };
+          return { success: false, error: 'Conta ainda não confirmada. Solicite a liberação ao diretor.' };
         }
-        return { success: false, error: authError?.message || 'Nao foi possivel criar uma sessao segura. Ative o acesso por e-mail.' };
+        return { success: false, error: authError?.message || 'Não foi possível criar uma sessão segura.' };
 
       }
 
@@ -436,12 +375,14 @@ export const AuthService = {
   async registerAthlete(data: RegisterAthletePayload): Promise<{ success: boolean; error?: string; user?: UserProfile }> {
     try {
       let userId = generateUUID();
+      let hasAuthenticatedSession = !isSupabaseConfigured;
+      let requiresDirectorConfirmation = false;
 
       if (isSupabaseConfigured && supabase) {
         // Se tiver senha informada, cadastra no Supabase Auth com timeout
         if (data.password && data.password.length >= 6) {
           try {
-            const { data: authRes } = await withTimeout(
+            const { data: authRes, error: authError } = await withTimeout(
               supabase.auth.signUp({
                 email: data.email,
                 password: data.password,
@@ -458,12 +399,21 @@ export const AuthService = {
               6000
             );
 
+            if (authError) {
+              return { success: false, error: authError.message || 'Não foi possível criar o acesso seguro.' };
+            }
+
             if (authRes?.user?.id) {
               userId = authRes.user.id;
             }
+            hasAuthenticatedSession = Boolean(authRes?.session);
+            requiresDirectorConfirmation = Boolean(authRes?.user && !authRes?.session);
           } catch (authErr) {
             console.warn('Aviso ao registrar no Supabase Auth:', authErr);
+            return { success: false, error: 'Não foi possível criar o acesso seguro. Tente novamente.' };
           }
+        } else {
+          return { success: false, error: 'Cadastre uma senha com pelo menos 6 caracteres.' };
         }
 
         // Salva na tabela pública de usuários
@@ -524,6 +474,13 @@ export const AuthService = {
         overallRating: 6.5,
         createdAt: new Date().toISOString(),
       };
+
+      if (requiresDirectorConfirmation || !hasAuthenticatedSession) {
+        return {
+          success: false,
+          error: 'Cadastro criado, mas ainda precisa ser liberado pelo diretor antes do primeiro acesso.',
+        };
+      }
 
       UserService.setCurrentUser(profile);
       return { success: true, user: profile };

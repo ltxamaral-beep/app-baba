@@ -46,8 +46,6 @@ export default function HomePage() {
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [loginLoading, setLoginLoading] = useState(false);
-  const [activationLoading, setActivationLoading] = useState(false);
-  const [activationSent, setActivationSent] = useState(false);
 
   // --- ESTADO DO CADASTRO ---
   const [registerStep, setRegisterStep] = useState<1 | 2>(1);
@@ -139,28 +137,6 @@ export default function HomePage() {
       setLoginError('Erro ao autenticar. Tente novamente.');
       setLoginLoading(false);
     }
-  };
-
-  const handleActivation = async () => {
-    const cleanEmail = loginEmail.trim().toLowerCase();
-    setActivationSent(false);
-    setLoginError('');
-
-    if (!cleanEmail || !cleanEmail.includes('@') || !cleanEmail.includes('.')) {
-      setLoginError('Informe um e-mail valido para receber o link de acesso.');
-      return;
-    }
-
-    setActivationLoading(true);
-    const result = await AuthService.requestMagicLink(cleanEmail);
-    setActivationLoading(false);
-
-    if (!result.success) {
-      setLoginError(result.error || 'Nao foi possivel enviar o link de acesso.');
-      return;
-    }
-
-    setActivationSent(true);
   };
 
   // HANDLER CADASTRO CEP
@@ -425,25 +401,6 @@ export default function HomePage() {
                   )}
                 </button>
 
-                <button
-                  type="button"
-                  onClick={handleActivation}
-                  disabled={activationLoading}
-                  className="w-full border border-[#00b49f]/50 bg-[#00b49f]/10 hover:bg-[#00b49f]/15 text-[#38e6cf] font-bold py-3 px-4 rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-50 text-sm"
-                >
-                  <Mail className="w-4 h-4" />
-                  {activationLoading ? 'Enviando link...' : 'Ativar acesso por e-mail'}
-                </button>
-
-                {activationSent && (
-                  <p className="text-emerald-300 text-xs bg-emerald-950/30 border border-emerald-700/40 p-3 rounded-xl">
-                    Link enviado. Abra o e-mail neste navegador e clique no link para entrar com sincronizacao ativa.
-                  </p>
-                )}
-
-                <p className="text-[11px] text-slate-500 text-center">
-                  Solicite apenas uma vez. Se o link já foi enviado, verifique também a caixa de spam.
-                </p>
               </form>
             </div>
           )}
