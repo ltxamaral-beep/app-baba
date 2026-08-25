@@ -160,15 +160,17 @@ export default function AttendancePage({ params }: { params: { groupId: string; 
     setAttendances(cloudAtts);
   };
 
-  const handleAddGuest = (e: React.FormEvent) => {
+  const handleAddGuest = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!guestForm.name.trim()) return;
 
-    MatchService.addGuestAttendance(
+    try {
+      const guestName = guestForm.name.trim();
+      const savedGuest = await MatchService.addGuestAttendance(
       match.id,
       activeUser,
       {
-        name: guestForm.name,
+        name: guestName,
         position: guestForm.position,
         overallRating: Number(guestForm.overallRating) || 6.5,
         dominantFoot: guestForm.dominantFoot,
@@ -186,15 +188,28 @@ export default function AttendancePage({ params }: { params: { groupId: string; 
       overallRating: 6.5,
       phone: '',
     });
-    setAttendances(MatchService.getAttendances(match.id));
-    setNotification(`Convidado ${guestForm.name} adicionado com sucesso! 🎟️`);
+    const cloudAttendances = await MatchService.syncAttendancesFromCloud(match.id);
+    setAttendances(cloudAttendances);
+    setNotification(`Convidado ${guestName} adicionado com sucesso! 🎟️`);
     setTimeout(() => setNotification(null), 4000);
+    if (savedGuest.status === 'waitlist') {
+      setNotification(`Convidado ${guestName} adicionado a fila de espera.`);
+    }
+    } catch (err: any) {
+      setNotification(err?.message || 'Erro ao adicionar o convidado.');
+      setTimeout(() => setNotification(null), 4000);
+    }
   };
 
-  const handleRemoveGuest = (attendanceId: string, guestName: string) => {
+  const handleRemoveGuest = async (attendanceId: string, guestName: string) => {
     if (confirm(`Deseja remover o convidado ${guestName} da lista?`)) {
-      MatchService.removeGuestAttendance(match.id, attendanceId);
-      setAttendances(MatchService.getAttendances(match.id));
+      const result = await MatchService.removeGuestAttendance(match.id, attendanceId);
+      if (!result.success) {
+        setNotification('Nao foi possivel remover o convidado.');
+        return;
+      }
+      const cloudAttendances = await MatchService.syncAttendancesFromCloud(match.id);
+      setAttendances(cloudAttendances);
       setNotification(`Convidado ${guestName} removido da lista.`);
       setTimeout(() => setNotification(null), 4000);
     }
@@ -219,10 +234,15 @@ export default function AttendancePage({ params }: { params: { groupId: string; 
     setTimeout(() => setNotification(null), 4000);
   };
 
-  const handleDemoteToWaitlist = (attendanceId: string, athleteName: string) => {
+  const handleDemoteToWaitlist = async (attendanceId: string, athleteName: string) => {
     if (!match) return;
-    MatchService.demoteConfirmedToWaitlist(match.id, attendanceId);
-    setAttendances(MatchService.getAttendances(match.id));
+    const demoted = await MatchService.demoteConfirmedToWaitlist(match.id, attendanceId);
+    if (!demoted) {
+      setNotification('Nao foi possivel mover o atleta para a fila de espera.');
+      return;
+    }
+    const cloudAttendances = await MatchService.syncAttendancesFromCloud(match.id);
+    setAttendances(cloudAttendances);
     setNotification(`${athleteName} foi movido para a fila de espera.`);
     setTimeout(() => setNotification(null), 4000);
   };

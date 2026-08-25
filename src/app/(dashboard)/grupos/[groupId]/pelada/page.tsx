@@ -281,11 +281,15 @@ export default function PeladaHubPage({ params }: { params: { groupId: string } 
     await loadData();
   };
 
-  const handleDemoteToWaitlist = (attendanceId: string, athleteName: string) => {
+  const handleDemoteToWaitlist = async (attendanceId: string, athleteName: string) => {
     if (!activeMatch) return;
-    MatchService.demoteConfirmedToWaitlist(activeMatch.id, attendanceId);
+    const demoted = await MatchService.demoteConfirmedToWaitlist(activeMatch.id, attendanceId);
+    if (!demoted) {
+      showToast('Nao foi possivel mover o atleta para a fila de espera.', 'error');
+      return;
+    }
     showToast(`${athleteName} foi movido para a fila de espera.`, 'info');
-    loadData();
+    await loadData();
   };
 
   const handleOpenEditMatch = () => {
@@ -391,7 +395,7 @@ export default function PeladaHubPage({ params }: { params: { groupId: string } 
     await loadData();
   };
 
-  const handleAddGuestSubmit = (e: React.FormEvent) => {
+  const handleAddGuestSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeMatch || !currentUser) return;
     if (!guestForm.name.trim()) {
@@ -399,11 +403,13 @@ export default function PeladaHubPage({ params }: { params: { groupId: string } 
       return;
     }
 
-    MatchService.addGuestAttendance(
+    try {
+      const guestName = guestForm.name.trim();
+      const savedGuest = await MatchService.addGuestAttendance(
       activeMatch.id,
       currentUser,
       {
-        name: guestForm.name,
+        name: guestName,
         position: guestForm.position,
         overallRating: Number(guestForm.overallRating) || 6.5,
         dominantFoot: guestForm.dominantFoot,
@@ -421,16 +427,26 @@ export default function PeladaHubPage({ params }: { params: { groupId: string } 
       overallRating: 6.5,
       phone: '',
     });
-    showToast(`Convidado ${guestForm.name} adicionado à lista! 🎟️`, 'success');
-    loadData();
+    showToast(`Convidado ${guestName} adicionado à lista! 🎟️`, 'success');
+    if (savedGuest.status === 'waitlist') {
+      showToast('O convidado entrou na fila de espera porque as vagas estao ocupadas.', 'info');
+    }
+    await loadData();
+    } catch (err: any) {
+      showToast(err?.message || 'Erro ao adicionar o convidado.', 'error');
+    }
   };
 
-  const handleRemoveGuest = (attendanceId: string, guestName: string) => {
+  const handleRemoveGuest = async (attendanceId: string, guestName: string) => {
     if (!activeMatch) return;
     if (confirm(`Deseja remover o convidado ${guestName} da lista?`)) {
-      MatchService.removeGuestAttendance(activeMatch.id, attendanceId);
+      const result = await MatchService.removeGuestAttendance(activeMatch.id, attendanceId);
+      if (!result.success) {
+        showToast('Nao foi possivel remover o convidado.', 'error');
+        return;
+      }
       showToast(`Convidado ${guestName} removido da lista.`, 'info');
-      loadData();
+      await loadData();
     }
   };
 

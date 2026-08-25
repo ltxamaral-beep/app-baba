@@ -23,6 +23,20 @@ async function getApiHeaders(json = false): Promise<Record<string, string>> {
   };
 }
 
+const GUEST_EMAIL_SUFFIX = '@convidado.gestao-pelada.local';
+
+function isCloudGuest(user?: Partial<UserProfile> | null): boolean {
+  return Boolean(user?.email?.toLowerCase().endsWith(GUEST_EMAIL_SUFFIX));
+}
+
+function parseGuestHost(address?: string): { id?: string; name?: string } {
+  if (!address) return {};
+  return {
+    id: address.match(/\[host:([0-9a-f-]{36})\]/i)?.[1],
+    name: address.match(/^Convidado por (.+?) \[host:/i)?.[1],
+  };
+}
+
 // ---------------------------------------------------------------------------
 // GESTÃO DE PELADAS & PRESENÇA (ABERTURA MANUAL PELA COMISSÃO)
 // ---------------------------------------------------------------------------
@@ -528,6 +542,9 @@ export const MatchService = {
           createdAt: u?.created_at || new Date().toISOString(),
         };
 
+        const guest = isCloudGuest(fallbackUser);
+        const guestHost = parseGuestHost(fallbackUser.address);
+
         return {
           id: row.id,
           matchId: row.match_id,
@@ -536,7 +553,10 @@ export const MatchService = {
           status: row.status as any,
           arrivalOrder: row.arrival_order || undefined,
           isFinancialBlocked: row.is_financial_blocked || false,
-          isGuest: typeof row.user_id === 'string' && row.user_id.startsWith('guest_'),
+          isGuest: guest,
+          invitedByUserId: guestHost.id,
+          invitedByName: guestHost.name,
+          guestPhone: guest ? fallbackUser.phone : undefined,
           confirmedAt: row.confirmed_at || new Date().toISOString(),
           checkedInAt: row.checked_in_at || undefined,
         };
@@ -689,32 +709,19 @@ export const MatchService = {
     const target = attendances.find((a) => a.id === attendanceIdOrUserId || a.userId === attendanceIdOrUserId);
     if (!target) return null;
 
-    const match = this.getMatchById(matchId);
-    const gid = match?.groupId || GroupService.getActiveGroupId() || '';
-    if (target.isFinancialBlocked) {
-      const currentUser = UserService.getCurrentUser();
-      const members = await GroupService.syncGroupMembersFromCloud(gid);
-      const director = members.find((member) => member.userId === currentUser.id);
-      if (!director || !['presidente', 'adm', 'tesoureiro'].includes(director.role)) return null;
-    }
+    const apiResponse = await withTimeout(
+      fetch(`/api/matches/${matchId}/attendances`, {
+        method: 'PATCH',
+        headers: await getApiHeaders(true),
+        body: JSON.stringify({ attendance_id: target.id, status: 'confirmed' }),
+      }),
+      15000,
+      null
+    );
+    if (!apiResponse?.ok) return null;
 
-    target.status = 'confirmed';
-    target.isFinancialBlocked = false;
-    setStored(`attendances_${matchId}`, attendances);
-
-    if (isSupabaseConfigured && supabase && isValidUUID(matchId)) {
-      try {
-        await withTimeout(
-          supabase.from('match_attendances').update({ status: 'confirmed', is_financial_blocked: false }).eq('id', target.id),
-          3000,
-          { data: null, error: null }
-        );
-      } catch (err) {
-        console.warn('Erro ao promover presença no Supabase:', err);
-      }
-    }
-
-    await this.syncAttendancesFromCloud(matchId);
+    const synced = await this.syncAttendancesFromCloud(matchId);
+    const promotedTarget = synced.find((item) => item.id === target.id) || null;
 
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('attendance_updated', { detail: { matchId } }));
@@ -722,6 +729,8 @@ export const MatchService = {
     }
 
     try {
+      const match = this.getMatchById(matchId);
+      const gid = match?.groupId || GroupService.getActiveGroupId() || '';
       await NotificationService.notifyGroup(gid, {
         type: 'attendance_confirmed',
         title: 'Promovido para a Lista de Confirmados! ⚽',
@@ -736,7 +745,7 @@ export const MatchService = {
       console.warn('Erro ao disparar notificação:', e);
     }
 
-    return target;
+    return promotedTarget;
   },
 
   async demoteConfirmedToWaitlist(matchId: string, attendanceIdOrUserId: string): Promise<MatchAttendance | null> {
@@ -744,22 +753,19 @@ export const MatchService = {
     const target = attendances.find((a) => a.id === attendanceIdOrUserId || a.userId === attendanceIdOrUserId);
     if (!target) return null;
 
-    target.status = 'waitlist';
-    setStored(`attendances_${matchId}`, attendances);
+    const apiResponse = await withTimeout(
+      fetch(`/api/matches/${matchId}/attendances`, {
+        method: 'PATCH',
+        headers: await getApiHeaders(true),
+        body: JSON.stringify({ attendance_id: target.id, status: 'waitlist' }),
+      }),
+      15000,
+      null
+    );
+    if (!apiResponse?.ok) return null;
 
-    if (isSupabaseConfigured && supabase && isValidUUID(matchId)) {
-      try {
-        await withTimeout(
-          supabase.from('match_attendances').update({ status: 'waitlist' }).eq('id', target.id),
-          3000,
-          { data: null, error: null }
-        );
-      } catch (err) {
-        console.warn('Erro ao rebaixar presença no Supabase:', err);
-      }
-    }
-
-    await this.syncAttendancesFromCloud(matchId);
+    const synced = await this.syncAttendancesFromCloud(matchId);
+    const demotedTarget = synced.find((item) => item.id === target.id) || null;
 
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('attendance_updated', { detail: { matchId } }));
@@ -774,10 +780,10 @@ export const MatchService = {
       message: `${target.user.name} foi movido para a fila de espera pela diretoria.`,
       data: { matchId, userId: target.userId, userName: target.user.name },
     });
-    return target;
+    return demotedTarget;
   },
 
-  addGuestAttendance(
+  async addGuestAttendance(
     matchId: string,
     hostUser: UserProfile,
     guestData: {
@@ -789,9 +795,9 @@ export const MatchService = {
     },
     maxPlayers: number,
     groupId?: string
-  ): MatchAttendance {
+  ): Promise<MatchAttendance> {
     const attendances = this.getAttendances(matchId);
-    const guestUserId = `guest_${generateUUID().substring(0, 8)}`;
+    const guestUserId = generateUUID();
     
     const confirmedCount = attendances.filter((a) => a.status === 'confirmed' || a.status === 'present').length;
     const isWaitlist = confirmedCount >= maxPlayers;
@@ -799,10 +805,10 @@ export const MatchService = {
     const guestProfile: UserProfile = {
       id: guestUserId,
       name: guestData.name.trim(),
-      email: '',
+      email: `guest_${guestUserId}@convidado.gestao-pelada.local`,
       phone: guestData.phone || hostUser.phone || '',
-      cpf: '',
-      address: `Convidado por ${hostUser.name}`,
+      cpf: `guest_${guestUserId}`,
+      address: `Convidado por ${hostUser.name} [host:${hostUser.id}]`,
       mainPosition: guestData.position,
       dominantFoot: guestData.dominantFoot || 'destro',
       overallRating: guestData.overallRating || 6.5,
@@ -824,8 +830,30 @@ export const MatchService = {
       confirmedAt: new Date().toISOString(),
     };
 
-    attendances.push(newAttendance);
-    setStored(`attendances_${matchId}`, attendances);
+    const apiResponse = await withTimeout(
+      fetch(`/api/matches/${matchId}/attendances`, {
+        method: 'POST',
+        headers: await getApiHeaders(true),
+        body: JSON.stringify({
+          id: attendanceId,
+          match_id: matchId,
+          user_id: guestUserId,
+          status: newAttendance.status,
+          is_financial_blocked: false,
+          confirmed_at: newAttendance.confirmedAt,
+          user: guestProfile,
+        }),
+      }),
+      15000,
+      null
+    );
+    if (!apiResponse?.ok) {
+      const apiBody = await apiResponse?.json().catch(() => null);
+      throw new Error(apiBody?.error || 'Nao foi possivel adicionar o convidado na nuvem.');
+    }
+
+    const synced = await this.syncAttendancesFromCloud(matchId);
+    const savedGuest = synced.find((item) => item.userId === guestUserId) || newAttendance;
 
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('attendance_updated', { detail: { matchId } }));
@@ -849,7 +877,7 @@ export const MatchService = {
       console.warn('Erro ao disparar notificação de convidado:', e);
     }
 
-    return newAttendance;
+    return savedGuest;
   },
 
   async removeAthleteAttendance(matchId: string, attendanceIdOrUserId: string): Promise<{ success: boolean; promotedUser?: UserProfile }> {
@@ -857,43 +885,23 @@ export const MatchService = {
     const target = attendances.find((a) => a.id === attendanceIdOrUserId || a.userId === attendanceIdOrUserId);
     if (!target) return { success: false };
 
-    const wasConfirmed = target.status === 'confirmed';
-    const targetId = target.id;
-    target.status = 'cancelled';
+    const apiResponse = await withTimeout(
+      fetch(`/api/matches/${matchId}/attendances`, {
+        method: 'DELETE',
+        headers: await getApiHeaders(true),
+        body: JSON.stringify({ attendance_id: target.id }),
+      }),
+      15000,
+      null
+    );
+    if (!apiResponse?.ok) return { success: false };
 
-    let promotedUser: UserProfile | undefined;
-    let promotedId: string | undefined;
-    if (wasConfirmed) {
-      const waitlistCandidate = attendances.find((a) => a.status === 'waitlist' && a.id !== targetId && !a.isFinancialBlocked);
-      if (waitlistCandidate) {
-        waitlistCandidate.status = 'confirmed';
-        promotedUser = waitlistCandidate.user;
-        promotedId = waitlistCandidate.id;
-      }
-    }
-
-    setStored(`attendances_${matchId}`, attendances);
-
-    if (isSupabaseConfigured && supabase && isValidUUID(matchId)) {
-      try {
-        await withTimeout(
-          supabase.from('match_attendances').delete().eq('id', targetId),
-          3000,
-          { error: null }
-        );
-        if (promotedId) {
-          await withTimeout(
-            supabase.from('match_attendances').update({ status: 'confirmed' }).eq('id', promotedId),
-            3000,
-            { error: null }
-          );
-        }
-      } catch (err) {
-        console.warn('Erro ao remover atleta do Supabase:', err);
-      }
-    }
-
-    await this.syncAttendancesFromCloud(matchId);
+    const apiBody = await apiResponse.json().catch(() => null);
+    const synced = await this.syncAttendancesFromCloud(matchId);
+    const promotedUserId = apiBody?.data?.promoted?.user_id;
+    const promotedUser = promotedUserId
+      ? synced.find((item) => item.userId === promotedUserId)?.user
+      : undefined;
 
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('attendance_updated', { detail: { matchId } }));
@@ -914,31 +922,35 @@ export const MatchService = {
     return { success: true, promotedUser };
   },
 
-  removeGuestAttendance(matchId: string, attendanceIdOrUserId: string): { promotedUser?: UserProfile } {
+  async removeGuestAttendance(matchId: string, attendanceIdOrUserId: string): Promise<{ success: boolean; promotedUser?: UserProfile }> {
     const attendances = this.getAttendances(matchId);
-    const targetIdx = attendances.findIndex((a) => (a.id === attendanceIdOrUserId || a.userId === attendanceIdOrUserId) && a.status !== 'cancelled');
-    if (targetIdx === -1) return {};
+    const target = attendances.find((a) => (a.id === attendanceIdOrUserId || a.userId === attendanceIdOrUserId) && a.status !== 'cancelled');
+    if (!target) return { success: false };
 
-    const wasConfirmed = attendances[targetIdx].status === 'confirmed';
-    attendances[targetIdx].status = 'cancelled';
+    const apiResponse = await withTimeout(
+      fetch(`/api/matches/${matchId}/attendances`, {
+        method: 'DELETE',
+        headers: await getApiHeaders(true),
+        body: JSON.stringify({ attendance_id: target.id }),
+      }),
+      15000,
+      null
+    );
+    if (!apiResponse?.ok) return { success: false };
 
-    let promotedUser: UserProfile | undefined;
-    if (wasConfirmed) {
-      const waitlistCandidate = attendances.find((a) => a.status === 'waitlist' && !a.isFinancialBlocked);
-      if (waitlistCandidate) {
-        waitlistCandidate.status = 'confirmed';
-        promotedUser = waitlistCandidate.user;
-      }
-    }
-
-    setStored(`attendances_${matchId}`, attendances);
+    const apiBody = await apiResponse.json().catch(() => null);
+    const synced = await this.syncAttendancesFromCloud(matchId);
+    const promotedUserId = apiBody?.data?.promoted?.user_id;
+    const promotedUser = promotedUserId
+      ? synced.find((item) => item.userId === promotedUserId)?.user
+      : undefined;
 
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('attendance_updated', { detail: { matchId } }));
       window.dispatchEvent(new Event('storage'));
     }
 
-    return { promotedUser };
+    return { success: true, promotedUser };
   },
 
   async cancelAttendance(matchId: string, userId: string): Promise<{ promotedUser?: UserProfile }> {
@@ -953,43 +965,25 @@ export const MatchService = {
     );
     if (leavingIdx === -1) return {};
 
-    const wasConfirmed = attendances[leavingIdx].status === 'confirmed';
     const leavingId = attendances[leavingIdx].id;
-    attendances[leavingIdx].status = 'cancelled';
 
-    let promotedUser: UserProfile | undefined;
-    let promotedId: string | undefined;
-    if (wasConfirmed) {
-      const waitlistCandidate = attendances.find((a) => a.status === 'waitlist' && !a.isFinancialBlocked);
-      if (waitlistCandidate) {
-        waitlistCandidate.status = 'confirmed';
-        promotedUser = waitlistCandidate.user;
-        promotedId = waitlistCandidate.id;
-      }
-    }
+    const apiResponse = await withTimeout(
+      fetch(`/api/matches/${matchId}/attendances`, {
+        method: 'DELETE',
+        headers: await getApiHeaders(true),
+        body: JSON.stringify({ attendance_id: leavingId }),
+      }),
+      15000,
+      null
+    );
+    if (!apiResponse?.ok) throw new Error('Nao foi possivel cancelar a presenca.');
+    const apiBody = await apiResponse.json().catch(() => null);
 
-    setStored(`attendances_${matchId}`, attendances);
-
-    if (isSupabaseConfigured && supabase && isValidUUID(matchId)) {
-      try {
-        await withTimeout(
-          supabase.from('match_attendances').update({ status: 'cancelled' }).eq('id', leavingId),
-          3000,
-          { data: null, error: null }
-        );
-        if (promotedId) {
-          await withTimeout(
-            supabase.from('match_attendances').update({ status: 'confirmed' }).eq('id', promotedId),
-            3000,
-            { data: null, error: null }
-          );
-        }
-      } catch (err) {
-        console.warn('Erro ao cancelar presença no Supabase:', err);
-      }
-    }
-
-    await this.syncAttendancesFromCloud(matchId);
+    const synced = await this.syncAttendancesFromCloud(matchId);
+    const promotedUserId = apiBody?.data?.promoted?.user_id;
+    const promotedUser = promotedUserId
+      ? synced.find((item) => item.userId === promotedUserId)?.user
+      : undefined;
 
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('attendance_updated', { detail: { matchId } }));
