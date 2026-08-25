@@ -204,11 +204,8 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
   const currentUser = UserService.getCurrentUser();
   const myTransactions = useMemo(() => {
     if (!currentUser) return [];
-    return transactions.filter((t) => 
-      (t.userId && (t.userId === currentUser.id || t.userId === currentMember?.userId)) ||
-      (currentUser.name && t.userName && t.userName.trim().toLowerCase() === currentUser.name.trim().toLowerCase()) ||
-      (currentUser.name && currentUser.name.trim().length > 3 && t.description && t.description.toLowerCase().includes(currentUser.name.trim().toLowerCase()))
-    );
+    const profileIds = new Set([currentUser.id, currentMember?.userId].filter(Boolean));
+    return transactions.filter((t) => Boolean(t.userId && profileIds.has(t.userId)));
   }, [transactions, currentUser, currentMember]);
 
   const myPendingTransactions = useMemo(() => {
@@ -244,12 +241,16 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
   const delinquentMembers = members.filter((m) => m.isBlockedFinancial);
 
   const handleSettle = async (transactionId: string) => {
-    await FinanceService.settleTransaction(groupId, transactionId);
-    await loadData();
-    const msg = 'Pagamento registrado com sucesso! Débito quitado e atleta liberado. ✅';
-    setNotification(msg);
-    showToast(msg, 'success');
-    setTimeout(() => setNotification(null), 4000);
+    try {
+      await FinanceService.settleTransaction(groupId, transactionId);
+      await loadData();
+      const msg = 'Pagamento registrado com sucesso! Débito quitado e atleta liberado. ✅';
+      setNotification(msg);
+      showToast(msg, 'success');
+      setTimeout(() => setNotification(null), 4000);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Não foi possível confirmar o pagamento.', 'error');
+    }
   };
 
   // Abrir Modal de Edição
@@ -276,24 +277,28 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
       if (u) targetUserName = u.user.name;
     }
 
-    const updated = await FinanceService.updateTransaction(groupId, editForm.id, {
-      description: editForm.description,
-      category: editForm.category,
-      type: editForm.type,
-      amount: editForm.amount,
-      dueDate: editForm.dueDate,
-      status: editForm.status,
-      userId: editForm.userId || undefined,
-      userName: targetUserName,
-    });
+    try {
+      const updated = await FinanceService.updateTransaction(groupId, editForm.id, {
+        description: editForm.description,
+        category: editForm.category,
+        type: editForm.type,
+        amount: editForm.amount,
+        dueDate: editForm.dueDate,
+        status: editForm.status,
+        userId: editForm.userId || undefined,
+        userName: targetUserName,
+      });
 
-    if (updated) {
-      await loadData();
-      setEditModalOpen(false);
-      const msg = 'Lançamento financeiro atualizado com sucesso! ✅';
-      setNotification(msg);
-      showToast(msg, 'success');
-      setTimeout(() => setNotification(null), 4000);
+      if (updated) {
+        await loadData();
+        setEditModalOpen(false);
+        const msg = 'Lançamento financeiro atualizado com sucesso! ✅';
+        setNotification(msg);
+        showToast(msg, 'success');
+        setTimeout(() => setNotification(null), 4000);
+      }
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Não foi possível atualizar o lançamento.', 'error');
     }
   };
 
@@ -304,22 +309,25 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
     );
     if (!confirmDelete) return;
 
-    const ok = await FinanceService.deleteTransaction(groupId, t.id);
-    if (ok) {
-      await loadData();
-      const msg = 'Lançamento excluído do extrato financeiro. 🗑️';
-      setNotification(msg);
-      showToast(msg, 'info');
-      setTimeout(() => setNotification(null), 4000);
-    } else {
-      showToast('Não foi possível confirmar a exclusão no servidor. O lançamento foi mantido.', 'error');
+    try {
+      const ok = await FinanceService.deleteTransaction(groupId, t.id);
+      if (ok) {
+        await loadData();
+        const msg = 'Lançamento excluído do extrato financeiro. 🗑️';
+        setNotification(msg);
+        showToast(msg, 'info');
+        setTimeout(() => setNotification(null), 4000);
+      }
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Não foi possível excluir o lançamento.', 'error');
     }
   };
 
   // 1. Submit Mensalidades (Lote ou Individual / Retroativa)
   const handleSubmitMonthly = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (monthlyMode === 'batch') {
+    try {
+      if (monthlyMode === 'batch') {
       const result = await FinanceService.generateMonthlyDuesBatch(
         groupId,
         monthRef,
@@ -332,7 +340,7 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
       const msg = `⚡ Mensalidade de ${monthRef} registrada para ${result.generatedCount} associados (${monthlyIsPaid ? 'PAGO NO CAIXA' : 'COBRANÇA PENDENTE'})!`;
       setNotification(msg);
       showToast(msg, 'success');
-    } else {
+      } else {
       const targetM = members.find((m) => m.userId === singleMonthlyUserId);
       if (!targetM) {
         alert('Selecione um atleta.');
@@ -352,25 +360,29 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
       const msg = `Mensalidade de ${monthRef} (${formatCurrency(monthlyAmount)}) lançada para ${targetM.user.name} (${monthlyIsPaid ? 'PAGO' : 'PENDENTE'}).`;
       setNotification(msg);
       showToast(msg, 'success');
+      }
+      setTimeout(() => setNotification(null), 5000);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Não foi possível gerar a cobrança.', 'error');
     }
-    setTimeout(() => setNotification(null), 5000);
   };
 
   // 2. Submit Lançamento Universal / Personalizado (Receita ou Despesa Livre)
   const handleSubmitCustom = async (e: React.FormEvent) => {
     e.preventDefault();
-    let targetUserName: string | undefined;
-    let targetUserId: string | undefined;
+    try {
+      let targetUserName: string | undefined;
+      let targetUserId: string | undefined;
 
-    if (customUserId) {
-      const u = members.find((m) => m.userId === customUserId);
-      if (u) {
-        targetUserName = u.user.name;
-        targetUserId = u.userId;
+      if (customUserId) {
+        const u = members.find((m) => m.userId === customUserId);
+        if (u) {
+          targetUserName = u.user.name;
+          targetUserId = u.userId;
+        }
       }
-    }
 
-    if (customType === 'income') {
+      if (customType === 'income') {
       await FinanceService.createTransaction(groupId, {
         category: customCategory,
         description: customDesc,
@@ -386,7 +398,7 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
       const msg = `🟢 Receita de ${formatCurrency(customAmount)} (${CATEGORY_LABELS[customCategory]?.label}) registrada com sucesso.`;
       setNotification(msg);
       showToast(msg, 'success');
-    } else {
+      } else {
       await FinanceService.createCost(
         groupId,
         customCategory,
@@ -398,11 +410,14 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
       const msg = `🔴 Despesa de ${formatCurrency(customAmount)} (${CATEGORY_LABELS[customCategory]?.label}) registrada no caixa.`;
       setNotification(msg);
       showToast(msg, 'success');
-    }
+      }
 
-    await loadData();
-    setModalOpen(false);
-    setTimeout(() => setNotification(null), 4000);
+      await loadData();
+      setModalOpen(false);
+      setTimeout(() => setNotification(null), 4000);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Não foi possível salvar o lançamento.', 'error');
+    }
   };
 
   // Rótulo amigável do período atual
