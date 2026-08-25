@@ -3,8 +3,9 @@
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { Menu, ArrowLeft, Bell, User, Check, X, Shield, PlusCircle, Trophy, DollarSign, Settings, Users, Sparkles } from 'lucide-react';
+import { Menu, ArrowLeft, Bell, User, Check, X, Shield, PlusCircle, Trophy, DollarSign, Settings, Users, Sparkles, LogOut } from 'lucide-react';
 import { GroupService, UserService, NotificationService } from '@/lib/services/storage-service';
+import { AuthService } from '@/lib/services/auth-service';
 import { Group, GroupMember, AppNotification } from '@/types';
 import { supabase } from '@/lib/supabase/client';
 
@@ -22,6 +23,7 @@ export function MobileHeader({ title, showBack = false, onBack }: MobileHeaderPr
   const [userGroups, setUserGroups] = useState<Array<{ group: Group; member: GroupMember }>>([]);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [notifOpen, setNotifOpen] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
 
   const loadData = async () => {
     const groups = GroupService.getUserGroups();
@@ -78,6 +80,16 @@ export function MobileHeader({ title, showBack = false, onBack }: MobileHeaderPr
       window.dispatchEvent(new CustomEvent('active_group_changed', { detail: { groupId } }));
       window.dispatchEvent(new Event('storage'));
     }
+    router.refresh();
+  };
+
+  const handleSignOut = async () => {
+    if (signingOut) return;
+    setSigningOut(true);
+    await AuthService.signOut();
+    setDrawerOpen(false);
+    setNotifOpen(false);
+    router.replace('/login');
     router.refresh();
   };
 
@@ -302,6 +314,14 @@ export function MobileHeader({ title, showBack = false, onBack }: MobileHeaderPr
                   {UserService.getCurrentUser()?.nickname ? ` (${UserService.getCurrentUser()?.nickname})` : ''}
                 </span>
               </Link>
+              <button
+                type="button"
+                onClick={handleSignOut}
+                disabled={signingOut}
+                className="mt-2 flex w-full items-center gap-2.5 rounded-xl border border-rose-900/60 bg-rose-950/30 p-2 text-xs font-bold text-rose-300 transition-colors hover:bg-rose-950/70 hover:text-white disabled:cursor-wait disabled:opacity-60"
+              >
+                <LogOut className="h-4 w-4" /> {signingOut ? 'Saindo...' : 'Sair do aplicativo'}
+              </button>
             </div>
           </div>
         </div>

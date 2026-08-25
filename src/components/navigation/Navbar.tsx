@@ -23,9 +23,11 @@ import {
   X,
   UserPlus,
   MapPin,
-  Clock
+  Clock,
+  LogOut
 } from 'lucide-react';
 import { GroupService, UserService, MatchService, NotificationService } from '@/lib/services/storage-service';
+import { AuthService } from '@/lib/services/auth-service';
 import { Group, GroupMember, AppNotification, UserProfile } from '@/types';
 import { supabase } from '@/lib/supabase/client';
 
@@ -38,6 +40,7 @@ export function Navbar() {
   const [currentMember, setCurrentMember] = useState<GroupMember | undefined>(undefined);
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [nextMatchId, setNextMatchId] = useState<string>('match-1');
+  const [signingOut, setSigningOut] = useState(false);
 
   // Estado da Central de Notificações
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
@@ -169,6 +172,16 @@ export function Navbar() {
   const handleMarkRead = async (notifId: string) => {
     await NotificationService.markAsRead(notifId);
     await loadNotifications(activeGroupId);
+  };
+
+  const handleSignOut = async () => {
+    if (signingOut) return;
+    setSigningOut(true);
+    await AuthService.signOut();
+    setDropdownOpen(false);
+    setNotifOpen(false);
+    router.replace('/login');
+    router.refresh();
   };
 
   const unreadCount = notifications.filter((n) => !n.read).length;
@@ -487,6 +500,16 @@ export function Navbar() {
               {currentUser?.nickname || currentUser?.name?.split(' ')[0] || 'Meu Perfil'}
             </span>
           </Link>
+          <button
+            type="button"
+            onClick={handleSignOut}
+            disabled={signingOut}
+            title="Sair do aplicativo"
+            className="flex items-center gap-1.5 rounded-xl border border-rose-900/70 bg-rose-950/30 px-2.5 py-1.5 text-xs font-bold text-rose-300 transition-colors hover:bg-rose-950/70 hover:text-white disabled:cursor-wait disabled:opacity-60"
+          >
+            <LogOut className="h-4 w-4" />
+            <span className="hidden lg:inline">{signingOut ? 'Saindo...' : 'Sair'}</span>
+          </button>
         </div>
       </div>
     </header>
