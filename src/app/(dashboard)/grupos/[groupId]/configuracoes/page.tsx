@@ -42,7 +42,7 @@ import {
   Plus
 } from 'lucide-react';
 
-export default function GroupSettingsPage({ params }: { params: { groupId: string } }) {
+export default function GroupSettingsPage({ params, searchParams }: { params: { groupId: string }; searchParams?: { gerenciar?: string } }) {
   const router = useRouter();
   const [group, setGroup] = useState<Group | null>(null);
   const [members, setMembers] = useState<GroupMember[]>([]);
@@ -62,6 +62,7 @@ export default function GroupSettingsPage({ params }: { params: { groupId: strin
   const [proFeatureTitle, setProFeatureTitle] = useState('');
   const [leaveModalOpen, setLeaveModalOpen] = useState(false);
   const [manualPlayerModalOpen, setManualPlayerModalOpen] = useState(false);
+  const [membersModalOpen, setMembersModalOpen] = useState(searchParams?.gerenciar === 'membros');
 
   // Formulário do Grupo
   const [groupForm, setGroupForm] = useState({
@@ -87,7 +88,7 @@ export default function GroupSettingsPage({ params }: { params: { groupId: strin
     role: 'associado' as GroupRole,
   });
 
-  const loadData = () => {
+  const loadData = async () => {
     const targetGroupId = params.groupId || GroupService.getActiveGroupId() || '';
     const g = GroupService.getGroupById(targetGroupId) || GroupService.getGroups()[0];
     if (g) {
@@ -113,15 +114,25 @@ export default function GroupSettingsPage({ params }: { params: { groupId: strin
 
       const myMem = GroupService.getMemberInGroup(g.id);
       setCurrentMember(myMem || null);
+
+      const cloudMembers = await GroupService.syncGroupMembersFromCloud(g.id);
+      setMembers(cloudMembers);
+      setPendingRequestsCount(cloudMembers.filter((m) => m.status === 'pending_approval').length);
+      const syncedCurrentMember = cloudMembers.find((m) =>
+        m.userId === myMem?.userId || m.id === myMem?.id
+      );
+      if (syncedCurrentMember) setCurrentMember(syncedCurrentMember);
     }
   };
 
   useEffect(() => {
-    loadData();
-    const handleGroupChanged = () => loadData();
+    void loadData();
+    const interval = window.setInterval(() => void loadData(), 5000);
+    const handleGroupChanged = () => void loadData();
     window.addEventListener('active_group_changed', handleGroupChanged);
     window.addEventListener('storage', handleGroupChanged);
     return () => {
+      window.clearInterval(interval);
       window.removeEventListener('active_group_changed', handleGroupChanged);
       window.removeEventListener('storage', handleGroupChanged);
     };
@@ -187,6 +198,35 @@ export default function GroupSettingsPage({ params }: { params: { groupId: strin
     setManualPlayerModalOpen(false);
     showToast('Jogador adicionado ao Baba!', 'success');
     loadData();
+  };
+
+  const handleApproveRequest = async (member: GroupMember) => {
+    if (!group) return;
+    const result = await NotificationService.approveMemberRequest(group.id, member.id);
+    if (!result.success) {
+      showToast(result.error || 'Nao foi possivel aprovar a solicitacao.', 'error');
+      return;
+    }
+    showToast(`${member.user.name} foi aprovado no grupo.`, 'success');
+    await loadData();
+  };
+
+  const handleRejectRequest = async (member: GroupMember) => {
+    if (!group) return;
+    const result = await NotificationService.rejectMemberRequest(group.id, member.id);
+    if (!result.success) {
+      showToast(result.error || 'Nao foi possivel recusar a solicitacao.', 'error');
+      return;
+    }
+    showToast(`Solicitacao de ${member.user.name} recusada.`, 'info');
+    await loadData();
+  };
+
+  const handleMemberRoleChange = async (member: GroupMember, role: GroupRole) => {
+    if (!group) return;
+    await GroupService.updateMemberRole(group.id, member.id, role);
+    showToast(`Cargo de ${member.user.name} atualizado.`, 'success');
+    await loadData();
   };
 
   const handleCopyLink = () => {
@@ -268,20 +308,21 @@ export default function GroupSettingsPage({ params }: { params: { groupId: strin
         <div className="bg-[#121e2b] border border-[#182737] rounded-2xl overflow-hidden divide-y divide-[#182737] shadow-sm">
           
           {/* Linha Jogadores */}
-          <Link
-            href={group ? `/grupos/${group.id}/pelada` : '#'}
-            className="p-3.5 flex items-center justify-between hover:bg-[#182737]/60 transition-colors"
+          <button
+            type="button"
+            onClick={() => setMembersModalOpen(true)}
+            className="w-full p-3.5 flex items-center justify-between hover:bg-[#182737]/60 transition-colors text-left"
           >
             <div className="flex items-center gap-3">
               <Users className="w-5 h-5 text-slate-300" />
               <span className="text-sm font-semibold text-white">Jogadores</span>
             </div>
             <span className="text-sm font-bold text-slate-300">{activePlayersCount}</span>
-          </Link>
+          </button>
 
           {/* Linha Solicitações */}
           <button
-            onClick={() => setInviteModalOpen(true)}
+            onClick={() => setMembersModalOpen(true)}
             className="w-full p-3.5 flex items-center justify-between hover:bg-[#182737]/60 transition-colors text-left"
           >
             <div className="flex items-center gap-3">
@@ -477,6 +518,88 @@ export default function GroupSettingsPage({ params }: { params: { groupId: strin
       {/* ========================================================================= */}
       {/* MODAIS INTERATIVOS */}
       {/* ========================================================================= */}
+
+      {/* Modal: Gerenciar membros, cargos e solicitacoes */}
+      {membersModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-[#121e2b] border border-[#1e3247] w-full max-w-2xl max-h-[85vh] rounded-2xl p-5 shadow-2xl flex flex-col gap-4">
+            <div className="flex items-center justify-between pb-3 border-b border-[#182737]">
+              <div>
+                <h3 className="text-base font-bold text-white flex items-center gap-2">
+                  <Users className="w-5 h-5 text-[#00b49f]" /> Membros e Cargos
+                </h3>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  {members.filter((m) => m.status === 'active').length} ativos e {pendingRequestsCount} solicitacao(oes) pendente(s)
+                </p>
+              </div>
+              <button onClick={() => setMembersModalOpen(false)} className="text-slate-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto space-y-5 pr-1">
+              {members.filter((m) => m.status === 'pending_approval').length > 0 && (
+                <section className="space-y-2">
+                  <h4 className="text-xs font-black uppercase tracking-wider text-amber-300 flex items-center gap-2">
+                    <UserCheck className="w-4 h-4" /> Solicitacoes pendentes
+                  </h4>
+                  {members.filter((m) => m.status === 'pending_approval').map((member) => (
+                    <div key={member.id} className="bg-amber-950/20 border border-amber-500/30 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-bold text-white">{member.user.name}</p>
+                        <p className="text-[11px] text-slate-400">
+                          {member.membershipType} • {member.user.mainPosition} • {member.user.email}
+                        </p>
+                      </div>
+                      {isDirector && (
+                        <div className="flex gap-2">
+                          <button type="button" onClick={() => handleApproveRequest(member)} className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-black px-3 py-2 rounded-lg">
+                            Aprovar
+                          </button>
+                          <button type="button" onClick={() => handleRejectRequest(member)} className="bg-rose-950/70 hover:bg-rose-900 border border-rose-800 text-rose-200 text-xs font-bold px-3 py-2 rounded-lg">
+                            Recusar
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </section>
+              )}
+
+              <section className="space-y-2">
+                <h4 className="text-xs font-black uppercase tracking-wider text-emerald-300">Membros ativos</h4>
+                {members.filter((m) => m.status === 'active').map((member) => (
+                  <div key={member.id} className="bg-[#0d1721] border border-[#182737] rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-bold text-white truncate">{member.user.name}</p>
+                      <p className="text-[11px] text-slate-400 truncate">
+                        {member.user.mainPosition} • {member.user.email || member.user.phone || 'Sem contato informado'}
+                      </p>
+                    </div>
+                    {isDirector ? (
+                      <select
+                        value={member.role}
+                        disabled={member.role === 'presidente'}
+                        onChange={(e) => handleMemberRoleChange(member, e.target.value as GroupRole)}
+                        className="bg-[#121e2b] border border-[#263b50] rounded-lg px-3 py-2 text-xs font-bold text-white disabled:opacity-60"
+                      >
+                        <option value="presidente">Presidente</option>
+                        <option value="adm">Administrador</option>
+                        <option value="tesoureiro">Tesoureiro</option>
+                        <option value="associado">Associado</option>
+                        <option value="diarista">Diarista</option>
+                        <option value="goleiro">Goleiro</option>
+                      </select>
+                    ) : (
+                      <span className="text-xs font-bold text-emerald-300 capitalize">{member.role}</span>
+                    )}
+                  </div>
+                ))}
+              </section>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal: Adicionar Jogador / Convites */}
       {inviteModalOpen && (

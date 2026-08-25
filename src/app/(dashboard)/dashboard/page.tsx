@@ -214,6 +214,9 @@ export default function DashboardPage() {
         .on('postgres_changes', { event: '*', schema: 'public', table: 'financial_transactions' }, () => {
           loadDashboardData();
         })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'group_members' }, () => {
+          loadDashboardData();
+        })
         .subscribe();
     }
 
@@ -1057,7 +1060,7 @@ export default function DashboardPage() {
 
               {isDirector && (
                 <Link
-                  href={`/grupos/${activeGroup.id}/configuracoes`}
+                  href={`/grupos/${activeGroup.id}/configuracoes?gerenciar=membros`}
                   className="inline-flex items-center gap-1.5 bg-slate-950 hover:bg-slate-800 border border-slate-800 text-xs font-bold text-slate-200 px-3.5 py-2 rounded-xl transition-colors shadow-sm"
                 >
                   <Users className="w-3.5 h-3.5 text-emerald-400" /> Gerenciar Membros & Cargos

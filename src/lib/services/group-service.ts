@@ -1204,8 +1204,7 @@ export const GroupService = {
 
     // Sincroniza novo membro no Supabase
     if (isSupabaseConfigured && supabase) {
-      try {
-        await supabase.from('group_members').insert([{
+      const { error } = await supabase.from('group_members').insert([{
           id: memberId,
           group_id: group.id,
           user_id: validUserId,
@@ -1213,8 +1212,9 @@ export const GroupService = {
           membership_type: membershipType,
           status: initialStatus,
         }]);
-      } catch (err) {
-        console.error('Erro ao salvar novo membro no Supabase:', err);
+      if (error) {
+        setStored(`members_${group.id}`, members.filter((member) => member.id !== memberId));
+        return { success: false, error: `Nao foi possivel enviar a solicitacao: ${error.message}` };
       }
     }
 
@@ -1235,6 +1235,16 @@ export const GroupService = {
           membershipType,
         }
       });
+      if (!isCreator) {
+        await NotificationService.notifyDirectors(group.id, {
+          type: 'member_request',
+          title: 'Solicitacao de Entrada no Grupo',
+          message: `${user.name} solicitou entrada como ${membershipType.toUpperCase()}.`,
+          groupName: group.name,
+          actorUserId: validUserId,
+          data: { memberId, userId: validUserId, userName: user.name, role: initialRole, membershipType },
+        });
+      }
     } catch (e) {
       console.warn('Erro ao disparar notificação de membro:', e);
     }

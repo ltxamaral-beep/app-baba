@@ -118,6 +118,20 @@ export const NotificationService = {
     await Promise.all(ids.map((id) => this.notifyUser(groupId, id, input)));
   },
 
+  async notifyDirectors(groupId: string, input: NotificationInput): Promise<void> {
+    if (!isSupabaseConfigured || !supabase || !isValidUUID(groupId)) return;
+    const { data: directors, error } = await supabase.from('group_members').select('user_id')
+      .eq('group_id', groupId).eq('status', 'active')
+      .in('role', ['presidente', 'adm', 'tesoureiro']);
+    if (error) {
+      console.warn('Erro ao localizar a diretoria:', error);
+      return;
+    }
+    const ids = Array.from(new Set((directors || []).map((member: any) => member.user_id)))
+      .filter((id): id is string => typeof id === 'string' && isValidUUID(id));
+    await Promise.all(ids.map((id) => this.notifyUser(groupId, id, input)));
+  },
+
   async markAsRead(notificationId: string): Promise<void> {
     storeNotifications(getStored<AppNotification[]>('app_notifications', []).map((notification) =>
       notification.id === notificationId ? { ...notification, read: true } : notification
@@ -152,10 +166,12 @@ export const NotificationService = {
     const target = members.find((member) => member.id === memberId || member.userId === memberId);
     if (!target) return { success: false, error: 'Membro nao encontrado.' };
     target.status = 'active';
-    setStored(`members_${groupId}`, members);
     if (isSupabaseConfigured && supabase) {
-      await supabase.from('group_members').update({ status: 'active' }).eq('id', target.id);
+      const { error } = await supabase.from('group_members').update({ status: 'active' })
+        .eq('id', target.id).eq('group_id', groupId);
+      if (error) return { success: false, error: error.message };
     }
+    setStored(`members_${groupId}`, members);
     await this.notifyUser(groupId, target.userId, {
       type: 'member_approved', title: 'Entrada aprovada',
       message: 'Sua entrada no grupo foi aprovada.',
