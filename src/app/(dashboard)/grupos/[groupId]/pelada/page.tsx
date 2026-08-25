@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { 
   GroupService, 
@@ -108,8 +108,12 @@ export default function PeladaHubPage({ params }: { params: { groupId: string } 
   const [ratingVotes, setRatingVotes] = useState<Record<string, { rating: number; tag?: string }>>({});
   const [votesSubmitted, setVotesSubmitted] = useState(false);
   const [copiedList, setCopiedList] = useState(false);
+  const loadInFlight = useRef(false);
 
   const loadData = async () => {
+    if (loadInFlight.current) return;
+    loadInFlight.current = true;
+    try {
     const user = UserService.getCurrentUser();
     setCurrentUser(user);
 
@@ -160,6 +164,9 @@ export default function PeladaHubPage({ params }: { params: { groupId: string } 
         setActiveMatch(localOpen);
         setAttendances(MatchService.getAttendances(localOpen.id));
       }
+    }
+    } finally {
+      loadInFlight.current = false;
     }
   };
 

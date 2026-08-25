@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { MatchService, GroupService, UserService } from '@/lib/services/storage-service';
@@ -48,27 +48,39 @@ export default function AttendancePage({ params }: { params: { groupId: string; 
     overallRating: 6.5,
     phone: '',
   });
+  const loadInFlight = useRef(false);
 
   const loadData = async () => {
+    if (loadInFlight.current) return;
+    loadInFlight.current = true;
+    try {
     const u = UserService.getCurrentUser();
     setActiveUser(u);
 
-    // Carrega dados locais imediatamente
     const currentMatch = MatchService.getMatchById(params.matchId) || null;
-    setMatch(currentMatch);
     setGroup(GroupService.getGroupById(params.groupId) || null);
-    setAttendances(MatchService.getAttendances(params.matchId));
+    if (!isSupabaseConfigured) {
+      setMatch(currentMatch);
+      setAttendances(MatchService.getAttendances(params.matchId));
+    }
 
     // Sincroniza partidas e presenças com o Supabase
     try {
       const cloudMatches = await MatchService.syncMatchesFromCloud(params.groupId);
-      const targetM = cloudMatches.find((m) => m.id === params.matchId) || currentMatch;
-      if (targetM) setMatch(targetM);
+      const targetM = cloudMatches.find((m) => m.id === params.matchId) || null;
+      setMatch(targetM);
+      if (!targetM) {
+        setAttendances([]);
+        return;
+      }
 
       const cloudAtts = await MatchService.syncAttendancesFromCloud(params.matchId);
       setAttendances(cloudAtts);
     } catch (e) {
       console.warn('Erro ao sincronizar presença com nuvem:', e);
+    }
+    } finally {
+      loadInFlight.current = false;
     }
   };
 

@@ -446,8 +446,8 @@ export const MatchService = {
           `)
           .eq('match_id', matchId)
           .neq('status', 'cancelled'),
-        4000,
-        { data: null, error: null }
+        15000,
+        { data: null, error: new Error('Tempo limite ao sincronizar presencas') }
       );
 
       if (error) {

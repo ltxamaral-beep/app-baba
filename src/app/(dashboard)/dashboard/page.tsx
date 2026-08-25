@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import { 
   GroupService, 
@@ -91,8 +91,12 @@ export default function DashboardPage() {
   const [financePeriodType, setFinancePeriodType] = useState<FinancePeriodType>('monthly');
   const [financeSelectedYear, setFinanceSelectedYear] = useState<number>(new Date().getFullYear());
   const [financeSelectedMonth, setFinanceSelectedMonth] = useState<number>(new Date().getMonth() + 1);
+  const loadInFlight = useRef(false);
 
   const loadDashboardData = async () => {
+    if (loadInFlight.current) return;
+    loadInFlight.current = true;
+    try {
     const currentUser = UserService.getCurrentUser();
     setUser(currentUser);
 
@@ -120,13 +124,15 @@ export default function DashboardPage() {
       setActiveGroup(currentActive);
       setCurrentMember(currentMem);
 
-      const matches = MatchService.getMatches(currentActive.id);
-      if (matches.length > 0) {
-        setNextMatch(matches[0]);
-        setAttendances(MatchService.getAttendances(matches[0].id));
-      } else {
-        setNextMatch(null);
-        setAttendances([]);
+      if (!isSupabaseConfigured) {
+        const matches = MatchService.getMatches(currentActive.id);
+        if (matches.length > 0) {
+          setNextMatch(matches[0]);
+          setAttendances(MatchService.getAttendances(matches[0].id));
+        } else {
+          setNextMatch(null);
+          setAttendances([]);
+        }
       }
 
       setTransactions(FinanceService.getTransactions(currentActive.id));
@@ -163,6 +169,9 @@ export default function DashboardPage() {
           setNextMatch(openMatch);
           const cloudAtts = await MatchService.syncAttendancesFromCloud(openMatch.id);
           setAttendances(cloudAtts);
+        } else {
+          setNextMatch(null);
+          setAttendances([]);
         }
 
         const cloudTrans = await FinanceService.syncTransactionsFromCloud(targetG.id);
@@ -172,6 +181,9 @@ export default function DashboardPage() {
       }
     } catch (e) {
       console.warn('Erro ao sincronizar dashboard com nuvem:', e);
+    }
+    } finally {
+      loadInFlight.current = false;
     }
   };
 
