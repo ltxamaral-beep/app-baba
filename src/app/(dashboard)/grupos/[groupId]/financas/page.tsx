@@ -80,7 +80,7 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
     : (GroupService.getActiveGroupId() || '0cae6a08-5cf3-466e-840a-0f6cf3a8f3ac');
   const [transactions, setTransactions] = useState<FinancialTransaction[]>([]);
   const [members, setMembers] = useState<GroupMember[]>([]);
-  const [activeFilter, setActiveFilter] = useState<'all' | 'inadimplentes' | 'cartoes' | 'mensalidades' | 'diarias' | 'saldo_inicial' | 'expenses'>('all');
+  const [activeFilter, setActiveFilter] = useState<'all' | 'inadimplentes' | 'cartoes' | 'mensalidades' | 'diarias' | 'income' | 'expenses'>('all');
   
   // ---------------------------------------------------------------------------
   // Filtro Temporal de Período (Mensal / Anual)
@@ -777,7 +777,7 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
               { id: 'mensalidades', label: '⭐ Mensalidades' },
               { id: 'cartoes', label: '🟦🟥 Multas' },
               { id: 'diarias', label: '🎟️ Diárias' },
-              { id: 'saldo_inicial', label: '🏦 Saldo Inicial' },
+              { id: 'income', label: '📈 Receitas' },
               { id: 'expenses', label: '📉 Despesas' },
             ].map((tab) => (
               <button
@@ -815,7 +815,7 @@ export default function FinancesPage({ params }: { params: { groupId: string } }
                   if (activeFilter === 'mensalidades') return t.category === 'mensalidade';
                   if (activeFilter === 'cartoes') return ['cartao_azul', 'cartao_vermelho', 'cartao_amarelo', 'multa_atraso', 'multa_falta'].includes(t.category);
                   if (activeFilter === 'diarias') return t.category === 'diaria';
-                  if (activeFilter === 'saldo_inicial') return t.category === 'saldo_inicial';
+                  if (activeFilter === 'income') return t.type === 'income';
                   if (activeFilter === 'expenses') return t.type === 'expense';
                   return true;
                 })
