@@ -6,7 +6,6 @@ import { useRouter } from 'next/navigation';
 import { validateCPF } from '@/lib/utils/cpf-validator';
 import { maskCPF, maskPhone, maskCEP } from '@/lib/utils/masks';
 import { fetchAddressByCEP } from '@/lib/utils/cep-service';
-import { GoogleAuthButton } from '@/components/auth/GoogleAuthButton';
 import { AuthService } from '@/lib/services/auth-service';
 import { AvatarUpload } from '@/components/profile/AvatarUpload';
 import { 
@@ -313,15 +312,6 @@ export default function RegisterPage() {
             {/* Opção 1: Cadastro Rápido com Google (quando na etapa 1) */}
             {step === 1 && (
               <div className="space-y-4">
-                <GoogleAuthButton label="Cadastrar com o Google" />
-
-                <div className="relative flex py-1 items-center">
-                  <div className="flex-grow border-t border-[#182737]"></div>
-                  <span className="flex-shrink mx-4 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                    Ou Cadastro Manual
-                  </span>
-                  <div className="flex-grow border-t border-[#182737]"></div>
-                </div>
               </div>
             )}
 

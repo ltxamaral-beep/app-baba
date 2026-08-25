@@ -6,7 +6,6 @@ import { useRouter } from 'next/navigation';
 import { maskCPF, maskPhone, maskCEP } from '@/lib/utils/masks';
 import { validateCPF } from '@/lib/utils/cpf-validator';
 import { fetchAddressByCEP } from '@/lib/utils/cep-service';
-import { GoogleAuthButton } from '@/components/auth/GoogleAuthButton';
 import { AuthService } from '@/lib/services/auth-service';
 import { AvatarUpload } from '@/components/profile/AvatarUpload';
 import { 
@@ -47,6 +46,8 @@ export default function HomePage() {
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [loginLoading, setLoginLoading] = useState(false);
+  const [activationLoading, setActivationLoading] = useState(false);
+  const [activationSent, setActivationSent] = useState(false);
 
   // --- ESTADO DO CADASTRO ---
   const [registerStep, setRegisterStep] = useState<1 | 2>(1);
@@ -138,6 +139,28 @@ export default function HomePage() {
       setLoginError('Erro ao autenticar. Tente novamente.');
       setLoginLoading(false);
     }
+  };
+
+  const handleActivation = async () => {
+    const cleanEmail = loginEmail.trim().toLowerCase();
+    setActivationSent(false);
+    setLoginError('');
+
+    if (!cleanEmail || !cleanEmail.includes('@') || !cleanEmail.includes('.')) {
+      setLoginError('Informe um e-mail valido para receber o link de acesso.');
+      return;
+    }
+
+    setActivationLoading(true);
+    const result = await AuthService.requestMagicLink(cleanEmail);
+    setActivationLoading(false);
+
+    if (!result.success) {
+      setLoginError(result.error || 'Nao foi possivel enviar o link de acesso.');
+      return;
+    }
+
+    setActivationSent(true);
   };
 
   // HANDLER CADASTRO CEP
@@ -340,16 +363,6 @@ export default function HomePage() {
           {/* TAB 1: LOGIN POR EMAIL */}
           {activeTab === 'login' && (
             <div className="space-y-5">
-              <GoogleAuthButton label="Continuar com o Google" />
-
-              <div className="relative flex py-1 items-center">
-                <div className="flex-grow border-t border-[#182737]"></div>
-                <span className="flex-shrink mx-4 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                  Ou acesse com seu E-mail
-                </span>
-                <div className="flex-grow border-t border-[#182737]"></div>
-              </div>
-
               <form onSubmit={handleLoginSubmit} className="space-y-4">
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 uppercase mb-1.5">
@@ -411,6 +424,22 @@ export default function HomePage() {
                     </>
                   )}
                 </button>
+
+                <button
+                  type="button"
+                  onClick={handleActivation}
+                  disabled={activationLoading}
+                  className="w-full border border-[#00b49f]/50 bg-[#00b49f]/10 hover:bg-[#00b49f]/15 text-[#38e6cf] font-bold py-3 px-4 rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-50 text-sm"
+                >
+                  <Mail className="w-4 h-4" />
+                  {activationLoading ? 'Enviando link...' : 'Ativar acesso por e-mail'}
+                </button>
+
+                {activationSent && (
+                  <p className="text-emerald-300 text-xs bg-emerald-950/30 border border-emerald-700/40 p-3 rounded-xl">
+                    Link enviado. Abra o e-mail neste navegador e clique no link para entrar com sincronizacao ativa.
+                  </p>
+                )}
               </form>
             </div>
           )}
@@ -447,15 +476,6 @@ export default function HomePage() {
                 <div className="space-y-4">
                   {registerStep === 1 && (
                     <div className="space-y-4">
-                      <GoogleAuthButton label="Cadastrar com o Google" />
-
-                      <div className="relative flex py-1 items-center">
-                        <div className="flex-grow border-t border-[#182737]"></div>
-                        <span className="flex-shrink mx-4 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                          Ou Cadastro Manual
-                        </span>
-                        <div className="flex-grow border-t border-[#182737]"></div>
-                      </div>
                     </div>
                   )}
 

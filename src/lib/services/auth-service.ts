@@ -127,6 +127,43 @@ export const AuthService = {
   /**
    * Login por CPF e Senha
    */
+  async requestMagicLink(email: string): Promise<{ success: boolean; error?: string }> {
+    const cleanEmail = email.trim().toLowerCase();
+
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      return { success: false, error: 'Informe um e-mail valido.' };
+    }
+
+    if (!isSupabaseConfigured || !supabase) {
+      return { success: false, error: 'A autenticacao por e-mail nao esta configurada.' };
+    }
+
+    try {
+      const emailRedirectTo = typeof window !== 'undefined'
+        ? `${window.location.origin}/auth/activate`
+        : undefined;
+      const { error } = await withTimeout(
+        supabase.auth.signInWithOtp({
+          email: cleanEmail,
+          options: {
+            shouldCreateUser: true,
+            emailRedirectTo,
+          },
+        }),
+        8000,
+        'Tempo limite ao enviar o link de acesso.'
+      );
+
+      if (error) {
+        return { success: false, error: error.message || 'Nao foi possivel enviar o link de acesso.' };
+      }
+
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Nao foi possivel enviar o link de acesso.' };
+    }
+  },
+
   async signInWithCpf(cpf: string, password?: string): Promise<{ success: boolean; error?: string; user?: UserProfile }> {
     const cleanCpf = cpf.replace(/\D/g, '');
 
@@ -175,7 +212,7 @@ export const AuthService = {
           authError = { message: e?.message || 'Timeout' };
         }
 
-        if (dbUser) {
+        if (authData?.user && dbUser) {
           const profile = this.mapDbUserToProfile(dbUser);
           UserService.setCurrentUser(profile);
           return { success: true, user: profile };
@@ -199,9 +236,11 @@ export const AuthService = {
           return { success: true, user: newProfile };
         }
 
-        if (authError && !dbUser) {
-          return { success: false, error: 'CPF ou senha incorretos.' };
+        if (authError?.message?.toLowerCase().includes('email not confirmed')) {
+          return { success: false, error: 'E-mail nao confirmado. Ative o acesso usando seu e-mail.' };
         }
+
+        return { success: false, error: 'CPF ou senha incorretos. Se necessario, ative o acesso por e-mail.' };
       }
 
       // Fallback local caso offline ou cadastrado na sessão / mock
@@ -335,35 +374,14 @@ export const AuthService = {
           }
         }
 
-        // Se deu erro no Auth ou timeout, checa se existe na tabela users
-        try {
-          const dbRes = await withTimeout(
-            supabase
-              .from('users')
-              .select('*')
-              .eq('email', cleanEmail)
-              .maybeSingle(),
-            4000
-          );
-          const dbUser = dbRes.data;
-
-          if (dbUser) {
-            const profile = this.mapDbUserToProfile(dbUser);
-            UserService.setCurrentUser(profile);
-            return { success: true, user: profile };
-          }
-        } catch (e) {
-          console.warn('Erro ao checar fallback users:', e);
+        if (authError?.message === 'Invalid login credentials' || authError?.code === 'invalid_credentials') {
+          return { success: false, error: 'E-mail ou senha incorretos. Se necessario, ative o acesso por e-mail.' };
         }
-
-        if (authError) {
-          if (authError.message === 'Invalid login credentials' || authError.code === 'invalid_credentials') {
-            return { success: false, error: 'E-mail ou senha incorretos.' };
-          }
-          if (authError.message?.toLowerCase().includes('email not confirmed')) {
-            return { success: false, error: 'E-mail não confirmado. Verifique seu e-mail.' };
-          }
+        if (authError?.message?.toLowerCase().includes('email not confirmed')) {
+          return { success: false, error: 'E-mail nao confirmado. Ative o acesso usando seu e-mail.' };
         }
+        return { success: false, error: authError?.message || 'Nao foi possivel criar uma sessao segura. Ative o acesso por e-mail.' };
+
       }
 
       // Fallback local caso offline ou cadastrado na sessão
@@ -501,11 +519,15 @@ export const AuthService = {
       if (!session || !session.user) return null;
 
       const authUser = session.user;
+      const verifiedEmail = authUser.email?.trim().toLowerCase();
+      const profileFilter = verifiedEmail
+        ? `id.eq.${authUser.id},email.eq.${verifiedEmail}`
+        : `id.eq.${authUser.id}`;
       const { data: dbUser } = await withTimeout(
         supabase
           .from('users')
           .select('*')
-          .eq('id', authUser.id)
+          .or(profileFilter)
           .maybeSingle(),
         4000
       );
