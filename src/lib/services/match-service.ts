@@ -12,6 +12,17 @@ import { UserService } from './user-service';
 import { GroupService } from './group-service';
 import { NotificationService } from './notification-service';
 
+async function getApiHeaders(json = false): Promise<Record<string, string>> {
+  if (!supabase) throw new Error('Supabase nao configurado');
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error('Sessao nao autenticada');
+  return {
+    Authorization: `Bearer ${token}`,
+    ...(json ? { 'Content-Type': 'application/json' } : {}),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // GESTÃO DE PELADAS & PRESENÇA (ABERTURA MANUAL PELA COMISSÃO)
 // ---------------------------------------------------------------------------
@@ -86,12 +97,30 @@ export const MatchService = {
       if (!isValidUUID(groupId)) return local;
 
       // Busca a fotografia atual das partidas do grupo.
-      const { data, error } = await withTimeout(
-        supabase.from('matches').select('*').eq('group_id', groupId)
-          .order('match_date', { ascending: false }),
-        6000,
-        { data: null, error: new Error('Tempo limite ao buscar listas') }
-      );
+      let data: any[] | null = null;
+      let error: any = null;
+      try {
+        const apiResponse = await withTimeout(
+          fetch(`/api/groups/${groupId}/matches?ts=${Date.now()}`, {
+            cache: 'no-store',
+            headers: await getApiHeaders(),
+          }),
+          15000,
+          null
+        );
+        if (!apiResponse?.ok) throw new Error('Falha na API de listas');
+        const apiBody = await apiResponse.json();
+        data = apiBody.data || [];
+      } catch {
+        const direct = await withTimeout(
+          supabase.from('matches').select('*').eq('group_id', groupId)
+            .order('match_date', { ascending: false }),
+          15000,
+          { data: null, error: new Error('Tempo limite ao buscar listas') }
+        );
+        data = direct.data;
+        error = direct.error;
+      }
 
       if (error) {
         console.warn('Aviso ao consultar partidas do Supabase:', error);
@@ -175,27 +204,30 @@ export const MatchService = {
             ? new Date(confirmationDeadline).toISOString()
             : null;
 
-          const { error: upsertError } = await withTimeout(
-            supabase.from('matches').upsert([{
+          const apiResponse = await withTimeout(
+            fetch(`/api/groups/${targetGroupIdInCloud}/matches`, {
+              method: 'POST',
+              headers: await getApiHeaders(true),
+              body: JSON.stringify({
               id: newMatch.id,
-              group_id: targetGroupIdInCloud,
               match_date: matchDate,
               start_time: formattedTime,
               confirmation_deadline: formattedDeadline,
               max_players: maxPlayers,
               cost_diarista: costDiarista,
               status: 'scheduled',
-            }]),
-            5000,
-            { error: null }
+              }),
+            }),
+            15000,
+            null
           );
 
-          if (upsertError) {
-            console.warn('Aviso ao salvar partida no Supabase:', upsertError.message);
-          }
+          if (!apiResponse?.ok) throw new Error('Falha ao abrir lista na nuvem');
         }
       } catch (err) {
         console.warn('Erro ao salvar partida no Supabase:', err);
+        setStored(`matches_${groupId}`, matches.filter((item) => item.id !== newMatch.id));
+        throw new Error('Nao foi possivel abrir a lista na nuvem. Tente novamente.');
       }
     }
 
@@ -269,12 +301,16 @@ export const MatchService = {
         }
         if (data.costDiarista !== undefined) updatePayload.cost_diarista = data.costDiarista;
 
-        const result = await withTimeout(
-          supabase.from('matches').update(updatePayload).eq('id', matchId).select('id'),
-          4000,
-          { error: new Error('Tempo limite ao atualizar a lista') }
+        const apiResponse = await withTimeout(
+          fetch(`/api/matches/${matchId}`, {
+            method: 'PATCH',
+            headers: await getApiHeaders(true),
+            body: JSON.stringify(updatePayload),
+          }),
+          15000,
+          null
         );
-        if (result.error || !result.data?.length) throw result.error || new Error('Lista nao encontrada');
+        if (!apiResponse?.ok) throw new Error('Falha ao atualizar a lista');
       } catch (err) {
         console.warn('Erro ao atualizar partida no Supabase:', err);
         await this.syncMatchesFromCloud(groupId);
@@ -299,13 +335,13 @@ export const MatchService = {
   async deleteMatch(groupId: string, matchId: string): Promise<boolean> {
     if (isSupabaseConfigured && supabase) {
       if (!isValidUUID(matchId)) return false;
-      const result = await withTimeout(
-        supabase.from('matches').delete().eq('id', matchId).select('id'),
-        6000,
-        { data: null, error: new Error('Tempo limite ao excluir a lista') }
+      const apiResponse = await withTimeout(
+        fetch(`/api/matches/${matchId}`, { method: 'DELETE', headers: await getApiHeaders() }),
+        15000,
+        null
       );
-      if (result.error) {
-        console.warn('Erro ao excluir partida no Supabase:', result.error);
+      if (!apiResponse?.ok) {
+        console.warn('Erro ao excluir partida pela API');
         throw new Error('Nao foi possivel excluir a lista na nuvem. Tente novamente.');
       }
     }
@@ -417,10 +453,25 @@ export const MatchService = {
       if (!isValidUUID(matchId)) return local;
 
       // 1. Busca presenças atualizadas do Supabase (com join seguro em users)
-      const { data, error } = await withTimeout(
-        supabase
-          .from('match_attendances')
-          .select(`
+      let data: any[] | null = null;
+      let error: any = null;
+      try {
+        const apiResponse = await withTimeout(
+          fetch(`/api/matches/${matchId}/attendances?ts=${Date.now()}`, {
+            cache: 'no-store',
+            headers: await getApiHeaders(),
+          }),
+          15000,
+          null
+        );
+        if (!apiResponse?.ok) throw new Error('Falha na API de presencas');
+        const apiBody = await apiResponse.json();
+        data = apiBody.data || [];
+      } catch {
+        const direct = await withTimeout(
+          supabase
+            .from('match_attendances')
+            .select(`
             id,
             match_id,
             user_id,
@@ -445,10 +496,13 @@ export const MatchService = {
             )
           `)
           .eq('match_id', matchId)
-          .neq('status', 'cancelled'),
-        15000,
-        { data: null, error: new Error('Tempo limite ao sincronizar presencas') }
-      );
+            .neq('status', 'cancelled'),
+          15000,
+          { data: null, error: new Error('Tempo limite ao sincronizar presencas') }
+        );
+        data = direct.data;
+        error = direct.error;
+      }
 
       if (error) {
         console.warn('Aviso ao consultar presenças do Supabase:', error);
@@ -562,19 +616,27 @@ export const MatchService = {
     // Sincroniza presença no Supabase de forma confiável e com timeout
     if (isSupabaseConfigured && supabase && isValidUUID(matchId)) {
       try {
-        const result = await withTimeout(
-          supabase.from('match_attendances').upsert([{
+        const apiResponse = await withTimeout(
+          fetch(`/api/matches/${matchId}/attendances`, {
+            method: 'POST',
+            headers: await getApiHeaders(true),
+            body: JSON.stringify({
             id: attendanceId,
             match_id: matchId,
             user_id: validUserId,
             status: newAttendance.status,
             is_financial_blocked: isFinancialBlocked,
             confirmed_at: newAttendance.confirmedAt,
-          }], { onConflict: 'match_id,user_id' }),
-          4000,
-          { data: null, error: new Error('Tempo limite ao confirmar presenca') }
+              user: validUser,
+            }),
+          }),
+          15000,
+          null
         );
-        if (result.error) throw result.error;
+        if (!apiResponse?.ok) {
+          const apiBody = await apiResponse?.json().catch(() => null);
+          throw new Error(apiBody?.error || 'Falha ao confirmar presenca');
+        }
       } catch (err) {
         console.warn('Erro ao salvar presença no Supabase:', err);
         await this.syncAttendancesFromCloud(matchId);

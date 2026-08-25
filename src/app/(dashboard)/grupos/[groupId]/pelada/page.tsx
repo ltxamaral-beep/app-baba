@@ -242,6 +242,7 @@ export default function PeladaHubPage({ params }: { params: { groupId: string } 
   // Abertura manual da lista pela comissão
   const handleOpenAttendance = async (e: React.FormEvent) => {
     e.preventDefault();
+    try {
     const newSlots = Number(openMatchData.maxPlayers) || 24;
     await GroupService.updateGroup(group.id, { maxSlots: newSlots, isOpenAttendance: true });
 
@@ -263,7 +264,10 @@ export default function PeladaHubPage({ params }: { params: { groupId: string } 
     setGroup((prev) => prev ? { ...prev, isOpenAttendance: true, maxSlots: newSlots } : prev);
     setOpenModalOpen(false);
     showToast('Lista de presença da pelada aberta com sucesso! ⚽', 'success');
-    await loadData();
+      await loadData();
+    } catch (err: any) {
+      showToast(err?.message || 'Erro ao abrir a lista.', 'error');
+    }
   };
 
   const handlePromoteToConfirmed = async (attendanceId: string, athleteName: string) => {
