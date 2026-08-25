@@ -686,17 +686,6 @@ export default function PeladaHubPage({
               </>
             )}
 
-            {/* Botão de Convidado: Disponível para associados confirmados ou diretoria */}
-            {isAttendanceOpen && activeMatch && (userAttendance?.status === 'confirmed' || isDirector) && (
-              <button
-                type="button"
-                onClick={() => setGuestModalOpen(true)}
-                className="inline-flex items-center gap-1.5 bg-[#00b49f]/15 hover:bg-[#00b49f]/25 border border-[#00b49f]/40 text-[#00b49f] font-bold px-3.5 py-2.5 rounded-xl text-xs transition-all active:scale-95 shadow-sm"
-              >
-                <UserPlus className="w-4 h-4" /> + Convidado
-              </button>
-            )}
-
             {/* Botão do Atleta: Confirmar ou Cancelar Presença */}
           {isAttendanceOpen && activeMatch && (
             <>
